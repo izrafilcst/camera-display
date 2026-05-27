@@ -47,13 +47,21 @@ void display_wait_dma(void);
 
 /**
  * Aloca um framebuffer 320*240*2 = 153600 bytes na PSRAM (DMA-capable).
- * @return Ponteiro alinhado a 4 bytes, ou nullptr se falhar.
+ *
+ * Tenta primeiro MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA.
+ * Fallback: somente MALLOC_CAP_SPIRAM com aviso de log.
+ * Requer CONFIG_SPIRAM=y e CONFIG_SPIRAM_MODE_OCT=y (ESP32-S3-N16R8).
+ *
+ * @return Ponteiro garantidamente alinhado a 4 bytes (requisito GDMA),
+ *         ou nullptr se PSRAM indisponivel ou memoria insuficiente.
+ * @note  app_main deve assegurar assert((uintptr_t)fb % 4 == 0) apos retorno.
  */
 uint16_t* display_alloc_framebuffer_psram(void);
 
 /**
  * Libera framebuffer alocado por display_alloc_framebuffer_psram.
- * fb == nullptr e no-op.
+ * @param fb  nullptr e no-op; comportamento seguro.
+ * @pre   display_wait_dma() deve ter sido chamado se fb estava em DMA ativo.
  */
 void display_free_framebuffer(uint16_t* fb);
 
