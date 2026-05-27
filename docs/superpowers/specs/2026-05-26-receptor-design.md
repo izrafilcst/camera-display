@@ -230,13 +230,19 @@ struct telemetry_state {
 ```
 drop_pct = frames_dropped_1s / (frames_received_1s + frames_dropped_1s)
 
-if drop_pct > 0.08 and requested_level < MAX_AUTO:
-    requested_level += 1
-    cooldown = 1s
-elif drop_pct < 0.01 and good_streak_seconds >= 5 and requested_level > 0:
-    requested_level -= 1
-    cooldown = 1s
-    good_streak_seconds = 0
+a cada janela de 1 s:
+    if drop_pct < 0.01:
+        good_streak_seconds += 1
+    else:
+        good_streak_seconds = 0  # reset agressivo a qualquer hiccup
+
+    if drop_pct > 0.08 and requested_level < MAX_AUTO:
+        requested_level += 1
+        cooldown = 1s
+    elif drop_pct < 0.01 and good_streak_seconds >= 5 and requested_level > 0:
+        requested_level -= 1
+        cooldown = 1s
+        good_streak_seconds = 0  # impede oscilação imediata
 
 MAX_AUTO = 2  (L2)
 clamp: 0 ≤ requested_level ≤ MAX_AUTO
@@ -307,11 +313,11 @@ NVS namespace `"hud"`:
 
 | Ação | Efeito |
 |---|---|
-| Long-press **Avançar** (≥ 1 s) | Abre menu / sobe um nível |
+| Long-press **Avançar** (≥ 1 s) | Estado FLIGHT → abre menu raiz. Estado MENU → ignorado (use click Voltar para subir um nível). |
 | Joystick Y | Cursor up/down em listas |
 | Click **Avançar** | Confirma / entra em submenu / toggle item |
-| Click **Voltar** | Back / sai do submenu |
-| Long-press **Voltar** (≥ 1 s) | Fecha menu (volta a flight) |
+| Click **Voltar** | Back / sai do submenu atual (sobe um nível). No menu raiz, sem efeito. |
+| Long-press **Voltar** (≥ 1 s) | Fecha menu (volta a FLIGHT) de qualquer profundidade |
 
 Durante menu aberto: `joystick_q` recebe zeros (anti-deriva). Bandeira `flags.bit0=menu_open` reportada no telemetry.
 
@@ -319,15 +325,26 @@ Durante menu aberto: `joystick_q` recebe zeros (anti-deriva). Bandeira `flags.bi
 
 ```
 ┌─────────────────────────────────────────────┐
-│ [LINK ✓] BAT: 78%              FPS: 24      │  ← topo (camada A + opcional FPS)
+│ [LINK ✓] BAT: 78%              FPS: 24      │  ← topo
 │                                             │
 │                                             │
-│                  ╋ (crosshair)              │  ← centro (item B)
+│                  ╋ (crosshair)              │  ← centro
 │                                             │
 │                                             │
-│ LAT:42  RSSI:-65  L1  DROP:0.3%             │  ← rodapé (camada B configurável)
+│ LAT:42  RSSI:-65  L1  DROP:0.3%             │  ← rodapé
 └─────────────────────────────────────────────┘
 ```
+
+**Posições fixas, visibilidade configurável:**
+
+| Posição | Conteúdo | Camada / Visibilidade |
+|---|---|---|
+| Topo-esquerda | `[LINK ✓]` status link | A — sempre visível |
+| Topo-esquerda | `BAT: NN%` bateria do robô | A — sempre visível |
+| Topo-direita | `FPS: NN` | B — toggle no menu |
+| Centro | crosshair | B — toggle no menu |
+| Rodapé (esq→dir) | `LAT:NN`, `RSSI:NN`, `LN`, `DROP:N.N%` | B — toggles independentes |
+| (futuro) | Heading tape, GPS, bearing/distância | B — placeholders C até hw existir |
 
 Tipografia mínima (~8×16 px). Cores RGB565 contrastantes (texto branco com sombra preta de 1 px).
 
