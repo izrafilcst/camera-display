@@ -12,7 +12,7 @@ extern "C" void app_main(void) {
     ESP_LOGI(TAG, "camera-display Sprint 1 boot, free heap=%u",
              (unsigned)esp_get_free_heap_size());
 
-    if (!display_init(LCD_SPI_HZ_SAFE)) {
+    if (!display_init(LCD_SPI_HZ_TARGET)) {
         ESP_LOGE(TAG, "display init failed");
         while (true) vTaskDelay(pdMS_TO_TICKS(1000));
     }
