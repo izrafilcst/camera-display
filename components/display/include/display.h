@@ -64,15 +64,17 @@ void display_free_framebuffer(uint16_t* fb);
  */
 void* display_get_lgfx_ptr(void);
 
-// ---------------------------------------------------------------------------
-// Test patterns — preenchem um buffer 320x240 RGB565
-// ---------------------------------------------------------------------------
+#ifdef __cplusplus
+}
+#endif
 
+// ---------------------------------------------------------------------------
+// Test patterns — preenchem um buffer 320x240 RGB565.
+// Declaradas fora do bloco extern "C": implementadas em C++ puro
+// (test_patterns.cpp e compilado como C++; o linker espera C++ linkage).
+// ---------------------------------------------------------------------------
+uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b);
 void pattern_color_bars(uint16_t* buf);
 void pattern_gradient(uint16_t* buf);
 void pattern_checker(uint16_t* buf, int cell_px);
 void pattern_tearing_stripes(uint16_t* buf, uint32_t frame_counter);
-
-#ifdef __cplusplus
-}
-#endif
