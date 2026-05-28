@@ -1,0 +1,11 @@
+menu "ESP-NOW link"
+    config RECEIVER_PEER_MAC
+        string "Hardcoded peer MAC (V0)"
+        default "AA:BB:CC:DD:EE:FF"
+        help
+            Six-byte MAC of the transmitter, colon-separated (e.g. 84:F7:03:AA:BB:CC).
+            MUST be changed before any production build.
+            V0 contract: if left at the default placeholder, the firmware will log a
+            warning at boot and the link will not work until a real MAC is configured.
+            See docs/superpowers/specs/2026-05-26-receptor-design.md §10.
+endmenu
