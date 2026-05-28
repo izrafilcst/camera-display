@@ -14,3 +14,16 @@ CONFIG_FREERTOS_HZ=1000
 # Avoid USB-CDC boot stall when no USB host is connected
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 CONFIG_ESP_CONSOLE_USB_CDC=n
+
+# Security hardening (audit S-01) — explicit brownout protection
+# Rationale: 80 MHz SPI + Octal PSRAM + Wi-Fi (Sprint 2) creates rail sag;
+# do not rely on IDF implicit default across upgrades.
+CONFIG_ESP_BROWNOUT_DET=y
+CONFIG_ESP_BROWNOUT_DET_LVL_SEL_7=y
+
+# Security hardening (audit S-02) — compiler defense-in-depth
+# Stack canaries detect smash before return; mandatory before ESP-NOW
+# header parsing (Sprint 2) dereferences attacker-supplied length fields.
+CONFIG_COMPILER_STACK_CHECK=y
+CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y
+CONFIG_COMPILER_WARN_WRITE_STRINGS=y

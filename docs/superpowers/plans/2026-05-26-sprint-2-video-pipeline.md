@@ -16,6 +16,11 @@
 - §8 Alocação PSRAM
 - §9 Tasks FreeRTOS
 
+## Pre-merge gate (BLOCKING)
+
+Antes de qualquer parte deste sprint mergear em `main`, leia e implemente:
+**[`docs/audits/sprint-2-parser-hardening-requirements.md`](../../audits/sprint-2-parser-hardening-requirements.md)** — REQ-1 a REQ-5 do auditor (origem: Sprint 1 audit S-15 + §4). Cada REQ tem checklist de verificação ao final do documento.
+
 ## File Structure
 
 ```
