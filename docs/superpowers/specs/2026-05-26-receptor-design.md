@@ -260,12 +260,22 @@ Consome (prioridade decrescente):
 
 Cada item é embrulhado com header ESP-NOW (`type + seq`) e enviado ao peer hardcoded (V0). Sem encriptação em V0; pairing BLE + PMK/LMK ficam para Plano 2.
 
-### 5.5 Protocolo MSG_TELEMETRY (RX→TX, 22 B)
+### 5.5 Protocolo MSG_TELEMETRY (RX→TX, 25 B)
+
+> **REQ-4 (Sprint 2 hardening)**: `seq` widened from `uint8_t` (1 B, wraps at 256) to
+> `uint32_t` (4 B, wraps at ~136 years @ 2 Hz). `esnow_hdr_t` simplified to
+> `msg_type + reserved`. Replay window = 32 packets enforced in `espnow_link.cpp`.
 
 ```c
+struct __attribute__((packed)) esnow_hdr_t {
+    uint8_t  msg_type;   // MSG_*
+    uint8_t  reserved;   // 0x00 (was: seq — moved into per-message body)
+};
+
 struct __attribute__((packed)) telemetry_rx_to_tx {
     uint8_t  msg_type;             // 0x20
-    uint8_t  seq;                  // ordering anti-replay
+    uint8_t  reserved;             // 0x00
+    uint32_t seq;                  // REQ-4: uint32_t, anti-replay (window=32)
     uint8_t  requested_level;      // 0..4 (L0..L4)
     uint8_t  current_level_seen;   // último L visto chegando
     uint16_t frames_received_1s;
