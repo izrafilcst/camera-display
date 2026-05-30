@@ -12,6 +12,7 @@
 #include "reassembly.h"
 #include "decoder.h"
 #include "render.h"
+#include "link_state.h"
 #include "wire_types.h"
 #include "pinout.h"
 #include <cstring>
@@ -43,9 +44,11 @@ static QueueHandle_t s_frame_q = nullptr;
 // ---------------------------------------------------------------------------
 static void on_msg(uint8_t msg_type, const uint8_t* payload, size_t len, int8_t rssi) {
     (void)rssi;
+    uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+    // Any valid message refreshes the link liveness clock (spec §7).
+    link_state_mark_rx(now_ms);
     if (msg_type != MSG_VIDEO_FRAG) return;
 
-    uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
     reassembled_frame_t out{};
 
     if (reassembly_push_frag(payload, len, now_ms, &out)) {
@@ -78,6 +81,37 @@ static void decode_task(void*) {
             continue;
         }
         render_present();
+        render_capture_thumb();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Link UI task (Core 1, priority 4): polls link state at 10 Hz and paints
+// FREEZE / DISCONNECTED overlays. Stays silent while LINK_CONNECTED to leave
+// the LCD to the decode pipeline.
+// ---------------------------------------------------------------------------
+static void link_ui_task(void*) {
+    link_status_t last = LINK_BOOT;
+    while (true) {
+        const uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+        const link_status_t st = link_state_query(now_ms);
+        switch (st) {
+            case LINK_FREEZE:
+                render_show_freeze();
+                break;
+            case LINK_DISCONNECTED:
+                render_show_disconnected(link_state_idle_ms(now_ms));
+                break;
+            case LINK_BOOT:
+            case LINK_CONNECTED:
+            default:
+                break;
+        }
+        if (st != last) {
+            ESP_LOGI(TAG, "link %d -> %d", last, st);
+            last = st;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
@@ -98,6 +132,8 @@ extern "C" void app_main(void) {
     if (peer_mac_is_placeholder(tx_mac)) {
         ESP_LOGW(TAG, "*** PEER MAC IS PLACEHOLDER — set CONFIG_RECEIVER_PEER_MAC ***");
     }
+
+    link_state_init();
 
     // Init order: Wi-Fi first to claim GDMA channels before SPI2 (see spec §1)
     if (!espnow_link_init(6, on_msg)) {
@@ -129,7 +165,8 @@ extern "C" void app_main(void) {
         return;
     }
 
-    xTaskCreatePinnedToCore(decode_task, "decode", 8192, nullptr, 6, nullptr, 1);
+    xTaskCreatePinnedToCore(decode_task,  "decode",  8192, nullptr, 6, nullptr, 1);
+    xTaskCreatePinnedToCore(link_ui_task, "link_ui", 4096, nullptr, 4, nullptr, 1);
 
     // Stats loop: log reassembly metrics every second
     uint32_t last_completed = 0;
