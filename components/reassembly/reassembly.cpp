@@ -37,8 +37,6 @@ struct slot_t {
     uint8_t*  data;                              // MAX_JPEG_SIZE bytes
     uint64_t  frags_bitmap;                      // bit N = frag N received
     uint8_t   frag_total;
-    // Per-fragment payload lengths for correct out-of-order offset calculation
-    uint16_t  frag_payload_lens[MAX_FRAGS_PER_FRAME];
 };
 
 static slot_t  s_slots[4];
@@ -101,21 +99,23 @@ static slot_t* alloc_slot(uint32_t now_ms) {
     }
     // Eviction accounting
     s_stats.frames_dropped_overrun++;
-    victim->in_use      = false;
+    victim->in_use       = false;
     victim->frags_bitmap = 0;
-    memset(victim->frag_payload_lens, 0, sizeof(victim->frag_payload_lens));
     (void)now_ms;
     return victim;
 }
 
-// Calculate byte offset of fragment frag_idx in the assembled JPEG buffer,
-// using the recorded per-fragment payload lengths.
-static size_t calc_offset(const slot_t* s, uint8_t frag_idx) {
-    size_t off = 0;
-    for (int i = 0; i < frag_idx; ++i) {
-        off += s->frag_payload_lens[i];
+// Calculate byte offset of fragment frag_idx in the assembled JPEG buffer.
+// Wire contract: all non-final fragments carry equal payload size; only the
+// last fragment may be shorter (the runt). Deriving offset purely from the
+// fragment's own header makes the result independent of arrival order.
+static size_t calc_offset(uint8_t frag_idx, uint8_t frag_total,
+                          uint16_t payload_len, uint16_t jpeg_size) {
+    if (frag_idx == frag_total - 1) {
+        // Last fragment: pinned to the tail of the assembled buffer
+        return static_cast<size_t>(jpeg_size) - payload_len;
     }
-    return off;
+    return static_cast<size_t>(frag_idx) * payload_len;
 }
 
 // ---------------------------------------------------------------------------
@@ -205,24 +205,26 @@ bool reassembly_push_frag(const uint8_t* payload, size_t len,
         s->frags_bitmap    = 0;
         s->first_seen_ms   = now_ms;
         s->tx_emission_ms  = 0;
-        memset(s->frag_payload_lens, 0, sizeof(s->frag_payload_lens));
     }
-
-    // Record the payload length for offset calculation
-    s->frag_payload_lens[h.frag_idx] = h.payload_len;
 
     if (h.frag_idx == 0) {
         s->tx_emission_ms = tx_ms;
     }
 
-    // Calculate write offset using already-recorded lengths
-    size_t offset = calc_offset(s, h.frag_idx);
+    // Precondition for calc_offset: payload_len must fit within jpeg_size.
+    // Without this, the last-fragment offset formula (jpeg_size - payload_len)
+    // underflows as size_t and silently bypasses the REQ-2 row-8 OOB check.
+    if (h.payload_len > h.jpeg_size) {
+        s_stats.fragments_invalid++;
+        return false;
+    }
+
+    // Offset is derived from the fragment's own header — arrival-order independent
+    size_t offset = calc_offset(h.frag_idx, h.frag_total, h.payload_len, h.jpeg_size);
 
     // REQ-2 row 8: offset + payload_len > jpeg_size (OOB write into slot)
     if (offset + h.payload_len > h.jpeg_size) {
         s_stats.fragments_invalid++;
-        // Undo the payload length record to keep slot consistent
-        s->frag_payload_lens[h.frag_idx] = 0;
         return false;
     }
 
@@ -253,12 +255,11 @@ bool reassembly_push_frag(const uint8_t* payload, size_t len,
 // ---------------------------------------------------------------------------
 void reassembly_release(reassembled_frame_t* out) {
     if (!out || !out->opaque) return;
-    slot_t* s    = static_cast<slot_t*>(out->opaque);
-    s->in_use    = false;
+    slot_t* s       = static_cast<slot_t*>(out->opaque);
+    s->in_use       = false;
     s->frags_bitmap = 0;
-    memset(s->frag_payload_lens, 0, sizeof(s->frag_payload_lens));
-    out->opaque    = nullptr;
-    out->jpeg_data = nullptr;
+    out->opaque     = nullptr;
+    out->jpeg_data  = nullptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -269,9 +270,8 @@ void reassembly_gc(uint32_t now_ms) {
         slot_t& s = s_slots[i];
         if (s.in_use && (now_ms - s.first_seen_ms) > SKIP_DROP_TIMEOUT_MS) {
             s_stats.frames_dropped_timeout++;
-            s.in_use      = false;
+            s.in_use       = false;
             s.frags_bitmap = 0;
-            memset(s.frag_payload_lens, 0, sizeof(s.frag_payload_lens));
         }
     }
 }
