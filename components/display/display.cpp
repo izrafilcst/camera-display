@@ -1,6 +1,7 @@
 #include "display.h"
 #include "lgfx_ili9341_config.h"
 #include "esp_log.h"
+#include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "driver/gpio.h"
 
@@ -15,10 +16,10 @@ bool display_init(uint32_t spi_hz) {
 
     // Neutralize SD and XPT2046 CS lines before SPI init to prevent
     // those chips from responding during ILI9341 init sequence.
-    gpio_set_direction((gpio_num_t)PIN_SD_CS,    GPIO_MODE_OUTPUT);
-    gpio_set_direction((gpio_num_t)PIN_TOUCH_CS, GPIO_MODE_OUTPUT);
-    gpio_set_level((gpio_num_t)PIN_SD_CS,    1);
-    gpio_set_level((gpio_num_t)PIN_TOUCH_CS, 1);
+    ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_set_direction((gpio_num_t)PIN_SD_CS,    GPIO_MODE_OUTPUT));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_set_direction((gpio_num_t)PIN_TOUCH_CS, GPIO_MODE_OUTPUT));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_set_level((gpio_num_t)PIN_SD_CS,    1));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_set_level((gpio_num_t)PIN_TOUCH_CS, 1));
 
     s_lcd = new LGFX_ILI9341_Red(spi_hz);
     if (!s_lcd->init()) {

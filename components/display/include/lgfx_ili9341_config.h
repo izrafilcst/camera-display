@@ -29,7 +29,9 @@ public:
             cfg.freq_write  = spi_hz;
             cfg.freq_read   = 16000000;
             cfg.spi_3wire   = false;
-            cfg.use_lock    = true;
+            // bus_shared=false + use_lock=false: display owns SPI2 exclusively;
+            // skip the per-transaction mutex (~5-10 us/frame saved).
+            cfg.use_lock    = false;
             cfg.dma_channel = SPI_DMA_CH_AUTO;
             cfg.pin_sclk    = PIN_LCD_SCK;
             cfg.pin_mosi    = PIN_LCD_MOSI;
