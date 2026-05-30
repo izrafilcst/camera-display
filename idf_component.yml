@@ -1,5 +1,0 @@
-dependencies:
-  lovyan03/LovyanGFX: "^1.1.16"
-  espressif/esp_jpeg: "^1.1.0"
-  idf:
-    version: ">=5.2.0"

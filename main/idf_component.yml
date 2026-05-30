@@ -1,0 +1,10 @@
+dependencies:
+  # LovyanGFX is published on GitHub; the version pinned here is the tag.
+  # The ESP Component Registry copy doesn't currently expose the ^1.1.16
+  # range we need, so we fetch directly from the canonical repo.
+  LovyanGFX:
+    git: https://github.com/lovyan03/LovyanGFX.git
+    version: "1.2.21"
+  espressif/esp_jpeg: "^1.1.0"
+  idf:
+    version: ">=5.2.0"

@@ -1,0 +1,12 @@
+# PlatformIO / ESP-IDF build artifacts
+.pio/
+build/
+managed_components/
+dependencies.lock
+sdkconfig
+sdkconfig.old
+sdkconfig.esp32s3-*
+
+# Swarm / agent scratch
+.claude-flow/
+.swarm/
