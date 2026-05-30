@@ -44,10 +44,15 @@ static QueueHandle_t s_frame_q = nullptr;
 // ---------------------------------------------------------------------------
 static void on_msg(uint8_t msg_type, const uint8_t* payload, size_t len, int8_t rssi) {
     (void)rssi;
-    uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
-    // Any valid message refreshes the link liveness clock (spec §7).
-    link_state_mark_rx(now_ms);
     if (msg_type != MSG_VIDEO_FRAG) return;
+
+    uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+    // Only video traffic refreshes the link liveness clock. Other msg_types
+    // (telemetry, joystick, command) currently lack per-type replay
+    // protection (only MSG_TELEMETRY does), so accepting them here would
+    // let an off-path attacker pin the UI to LINK_CONNECTED with one
+    // packet every <200 ms while no real video decodes (audit S3-01).
+    link_state_mark_rx(now_ms);
 
     reassembled_frame_t out{};
 

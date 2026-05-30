@@ -90,19 +90,27 @@ guarded by both `s_mutex` and a `s_has_presented` latch.
 
 ## 6. `link_state_mark_rx` placement in `on_msg`
 
-**Decision**: call `link_state_mark_rx(now_ms)` for *any* valid message
-type, before the `MSG_VIDEO_FRAG` filter.
+**Decision** (revised after audit S3-01): call `link_state_mark_rx(now_ms)`
+**only after** the `if (msg_type != MSG_VIDEO_FRAG) return` filter — i.e.
+only video traffic counts as link liveness.
 
-**Why**: spec §7 defines link liveness in terms of *traffic*, not
-*video frames*. Future telemetry, heartbeat, or control messages should
-also reset the FREEZE clock. The Sprint 2 audit's S2-15 follow-up
-(replay window per msg_type) already constrains what counts as "valid"
-upstream of this callback.
+**Why the original "any msg_type" plan was wrong**: in IDF 5.x ESP-NOW the
+RX callback fires for any packet on the channel, regardless of peer
+registration. `peer_mac_is_placeholder` only warns at boot, it doesn't
+filter inbound traffic. Out of the four currently-defined msg_types, only
+`MSG_TELEMETRY` has replay protection in `check_and_update_seq`;
+`MSG_JOYSTICK` (0x30), `MSG_COMMAND` (0x40), and `MSG_VIDEO_FRAG` itself
+are accepted on any seq value. An off-path attacker could therefore inject
+one packet every <200 ms with any of those types and pin the UI to
+`LINK_CONNECTED` while delivering no usable video, defeating the FREEZE/
+DISCONNECTED indicators that are the entire point of this sprint.
 
-**Trade-off**: an attacker with a known peer MAC could keep the state
-`CONNECTED` indefinitely by spraying valid telemetry. Mitigated by REQ-5
-(Kconfig peer MAC) — without the right MAC, `esp_now_recv_cb` never
-fires. Tracked as INFO in this sprint's audit, not a blocker.
+The corrected gating is intentionally narrow: liveness is now bound to the
+*decodable* traffic stream, not to "anything that parses as ESP-NOW".
+
+**When future sprints want broader liveness**: add per-msg_type gating in
+the specific handler that consumes that type, *after* replay/auth checks
+pass. Do not re-broaden the on_msg-level mark.
 
 ## 7. `link_ui_task` placement and cadence
 
