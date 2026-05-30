@@ -88,29 +88,42 @@ guarded by both `s_mutex` and a `s_has_presented` latch.
   silent no-op instead of copying garbage PSRAM.
 - The mutex prevents `render_present` from swapping back_idx mid-copy.
 
-## 6. `link_state_mark_rx` placement in `on_msg`
+## 6. `link_state_mark_rx` placement — final policy
 
-**Decision** (revised after audit S3-01): call `link_state_mark_rx(now_ms)`
-**only after** the `if (msg_type != MSG_VIDEO_FRAG) return` filter — i.e.
-only video traffic counts as link liveness.
+**Decision** (final, after audit S3-01 and a follow-up security review):
+`link_state_mark_rx` is called from `decode_task` immediately after
+`decoder_decode_to_rgb565` returns success. `on_msg` does NOT mark
+liveness. In addition, `espnow_link.cpp:on_rx` filters by source MAC
+against the configured peer before any callback fires.
 
-**Why the original "any msg_type" plan was wrong**: in IDF 5.x ESP-NOW the
-RX callback fires for any packet on the channel, regardless of peer
-registration. `peer_mac_is_placeholder` only warns at boot, it doesn't
-filter inbound traffic. Out of the four currently-defined msg_types, only
-`MSG_TELEMETRY` has replay protection in `check_and_update_seq`;
-`MSG_JOYSTICK` (0x30), `MSG_COMMAND` (0x40), and `MSG_VIDEO_FRAG` itself
-are accepted on any seq value. An off-path attacker could therefore inject
-one packet every <200 ms with any of those types and pin the UI to
-`LINK_CONNECTED` while delivering no usable video, defeating the FREEZE/
-DISCONNECTED indicators that are the entire point of this sprint.
+**Three layers of defence, weakest first**:
 
-The corrected gating is intentionally narrow: liveness is now bound to the
-*decodable* traffic stream, not to "anything that parses as ESP-NOW".
+1. **Peer MAC enforcement in `on_rx`** (espnow_link.cpp). Stores the
+   configured peer MAC at `espnow_link_add_peer`, drops any inbound
+   packet whose `info->src_addr` differs. In IDF 5.x the RX callback
+   fires for any packet on the channel regardless of peer registration
+   (peers are mainly for outbound encryption); this is the first
+   bouncer.
+2. **`MSG_VIDEO_FRAG` filter in `on_msg`** (app_main.cpp). Non-video
+   types never even reach the reassembly path.
+3. **Decode-success liveness in `decode_task`** (app_main.cpp). Only a
+   frame that passes JPEG validation and decodes successfully refreshes
+   the FREEZE clock. Header-only spoofing, fragment replay, and partial
+   reassembly are all silently invisible to `link_state`.
 
-**When future sprints want broader liveness**: add per-msg_type gating in
-the specific handler that consumes that type, *after* replay/auth checks
-pass. Do not re-broaden the on_msg-level mark.
+**Why we kept iterating**: the first pass moved `mark_rx` below the
+`msg_type` filter; the second-pass review pointed out `MSG_VIDEO_FRAG`
+has no replay window of its own, so a captured fragment could still
+pin liveness. Marking on decode success requires the attacker to
+synthesise a valid JPEG, which is in a different class than spoofing a
+2-byte header.
+
+**Cost**: a few microseconds shift in the path from RX to mark — well
+below the 200 ms FREEZE threshold.
+
+**When future sprints want broader liveness**: add the mark in the
+specific handler that consumes that msg_type, *after* replay/auth
+checks pass. Do not re-broaden upstream.
 
 ## 7. `link_ui_task` placement and cadence
 

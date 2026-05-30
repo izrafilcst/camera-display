@@ -12,12 +12,13 @@ enum link_status_t : uint8_t {
     LINK_DISCONNECTED = 3,  // > LINK_DISCONNECT_MS
 };
 
-// Thresholds in ms (spec §7).
-static const uint32_t LINK_FREEZE_MS     = 200;
-static const uint32_t LINK_DISCONNECT_MS = 3000;
-
-// Sentinel returned by link_state_idle_ms() before the first packet arrives.
-static const uint32_t LINK_IDLE_UNKNOWN  = 0xFFFFFFFFu;
+// Thresholds in ms (spec §7). enum-of-uint32_t form lets the values stay
+// constexpr and external-linkage-free in both C and C++ TUs.
+enum : uint32_t {
+    LINK_FREEZE_MS     = 200,
+    LINK_DISCONNECT_MS = 3000,
+    LINK_IDLE_UNKNOWN  = 0xFFFFFFFFu,  // returned by link_state_idle_ms before first rx
+};
 
 bool link_state_init(void);
 

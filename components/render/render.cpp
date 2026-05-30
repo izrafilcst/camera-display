@@ -92,20 +92,46 @@ void render_capture_thumb(void) {
     xSemaphoreGive(s_mutex);
 }
 
+// After any overlay draws via fillRect/fillScreen/pushImage the ILI9341
+// controller holds whatever sub-window the LovyanGFX call ended with
+// (CASET/RASET were emitted internally). Sprint 1 nit F6 pinned the
+// blit window to 320x240 once at display_init and dropped the per-blit
+// setAddrWindow from display_blit_full — so if we don't restore the
+// full window here, the next video frame streams 320*240 pixels into
+// whatever tiny rect the overlay left behind and wraps catastrophically.
+static inline void restore_full_blit_window(lgfx::LGFX_Device* lcd) {
+    lcd->setAddrWindow(0, 0, 320, 240);
+}
+
 void render_show_freeze(void) {
     auto* lcd = get_lcd();
     if (!lcd) return;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    display_wait_dma();
-    // Blink the badge at ~2 Hz (250 ms half-period).
+    // Blink the badge at ~2 Hz (250 ms half-period). The blink-off half
+    // is a positive repaint of the underlying frame strip — leaving the
+    // badge un-erased would look like a static "FREEZE" badge since the
+    // decode task is by definition not delivering frames in this state.
     const bool blink = (esp_timer_get_time() / 250000) & 1;
     if (blink) {
+        display_wait_dma();
         lcd->startWrite();
-        lcd->fillRect(250, 4, 66, 16, 0xF800);          // red badge
+        lcd->fillRect(248, 4, 64, 16, 0xF800);          // red badge
         lcd->setTextColor(0xFFFF, 0xF800);
-        lcd->setTextSize(2);
-        lcd->setCursor(254, 6);
+        lcd->setTextSize(1);
+        lcd->setCursor(254, 8);
         lcd->print("FREEZE");
+        restore_full_blit_window(lcd);
+        lcd->endWrite();
+    } else if (s_has_presented) {
+        // Erase the badge by streaming the underlying front-buffer slice.
+        display_wait_dma();
+        lcd->startWrite();
+        lcd->setAddrWindow(248, 4, 64, 16);
+        const uint16_t* fb = s_fb[s_back_idx ^ 1];
+        for (int y = 4; y < 20; ++y) {
+            lcd->writePixels(&fb[y * 320 + 248], 64, true);
+        }
+        restore_full_blit_window(lcd);
         lcd->endWrite();
     }
     xSemaphoreGive(s_mutex);
@@ -130,6 +156,7 @@ void render_show_disconnected(uint32_t since_ms) {
         lcd->setCursor(120, 205);
         lcd->print("ultimo frame");
     }
+    restore_full_blit_window(lcd);
     lcd->endWrite();
     xSemaphoreGive(s_mutex);
 }

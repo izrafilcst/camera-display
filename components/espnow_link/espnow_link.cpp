@@ -14,6 +14,11 @@
 static const char* TAG = "espnow_link";
 static espnow_msg_cb_t s_cb = nullptr;
 
+// Configured peer MAC (set by espnow_link_add_peer). on_rx filters source
+// against this — without it any sender on the channel could reach on_msg.
+static uint8_t s_peer_mac[6]    = {0};
+static bool    s_peer_mac_set   = false;
+
 // ---------------------------------------------------------------------------
 // REQ-4: replay-protection state (per msg_type)
 // ---------------------------------------------------------------------------
@@ -38,6 +43,16 @@ static bool check_and_update_seq(uint8_t msg_type, uint32_t seq) {
 // ---------------------------------------------------------------------------
 static void on_rx(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
     if (len < static_cast<int>(sizeof(esnow_hdr_t))) return;
+
+    // Peer MAC enforcement: drop anything not from the configured peer.
+    // Without this, any ESP-NOW packet on the channel reaches the callback,
+    // regardless of esp_now_add_peer (which only authorises outbound sends).
+    // V0: placeholder MACs filter out all real senders by design — the
+    // boot-time warning tells the operator to fix CONFIG_RECEIVER_PEER_MAC.
+    if (!s_peer_mac_set || !info || !info->src_addr ||
+        memcmp(info->src_addr, s_peer_mac, 6) != 0) {
+        return;
+    }
 
     esnow_hdr_t h;
     memcpy(&h, data, sizeof(h));
@@ -119,7 +134,11 @@ bool espnow_link_add_peer(const uint8_t mac[6]) {
     p.channel = 0;           // 0 = current channel
     p.ifidx   = WIFI_IF_STA;
     p.encrypt = false;       // V0: no encryption
-    return esp_now_add_peer(&p) == ESP_OK;
+    if (esp_now_add_peer(&p) != ESP_OK) return false;
+    // Remember the peer MAC for inbound source filtering in on_rx.
+    memcpy(s_peer_mac, mac, 6);
+    s_peer_mac_set = true;
+    return true;
 }
 
 // ---------------------------------------------------------------------------

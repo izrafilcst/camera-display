@@ -47,12 +47,12 @@ static void on_msg(uint8_t msg_type, const uint8_t* payload, size_t len, int8_t 
     if (msg_type != MSG_VIDEO_FRAG) return;
 
     uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
-    // Only video traffic refreshes the link liveness clock. Other msg_types
-    // (telemetry, joystick, command) currently lack per-type replay
-    // protection (only MSG_TELEMETRY does), so accepting them here would
-    // let an off-path attacker pin the UI to LINK_CONNECTED with one
-    // packet every <200 ms while no real video decodes (audit S3-01).
-    link_state_mark_rx(now_ms);
+    // Liveness is refreshed in decode_task only after a frame fully decodes
+    // (audit S3-01 follow-up): even gating on MSG_VIDEO_FRAG is too generous
+    // because that msg_type has no replay window — an attacker could keep
+    // CONNECTED by replaying any captured fragment. Marking on successful
+    // JPEG decode requires producing a valid frame, which neither header
+    // spoofing nor fragment replay can do.
 
     reassembled_frame_t out{};
 
@@ -85,6 +85,9 @@ static void decode_task(void*) {
             ESP_LOGW(TAG, "decode failed — skipping frame");
             continue;
         }
+        // Successful decode is the strongest available evidence of real
+        // traffic from a cooperating transmitter — refresh liveness here.
+        link_state_mark_rx(static_cast<uint32_t>(esp_timer_get_time() / 1000));
         render_present();
         render_capture_thumb();
     }
@@ -124,7 +127,7 @@ static void link_ui_task(void*) {
 // app_main
 // ---------------------------------------------------------------------------
 extern "C" void app_main(void) {
-    ESP_LOGI(TAG, "Sprint 2 boot — free heap=%u",
+    ESP_LOGI(TAG, "Sprint 3 boot — free heap=%u",
              (unsigned)esp_get_free_heap_size());
 
     // REQ-5: parse Kconfig MAC and warn if placeholder

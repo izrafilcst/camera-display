@@ -159,3 +159,18 @@ Sprint 3 is structurally sound — atomic state machine, mutex-guarded LCD acces
 - `audit/S3-03` (Medium, fold into Sprint 4 `link_state_snapshot` work)
 
 Lows (S3-04, S3-05, S3-06, S3-07) and Infos (S3-08, S3-09, S3-10) tracked as backlog with no Sprint 4 gating.
+
+---
+
+## 9. Resolution log
+
+| Finding | Disposition | Commit / location |
+|---|---|---|
+| S3-01 (High) — link-liveness spoof | RESOLVED + hardened. Initial fix moved `mark_rx` below the `MSG_VIDEO_FRAG` filter, but follow-up review noted MSG_VIDEO_FRAG itself has no replay window. Refined fix moves `mark_rx` into the `decode_task` success path so liveness only refreshes on a fully decoded JPEG. Also added inbound peer-MAC enforcement in `espnow_link.cpp:on_rx` so any non-peer sender is dropped before reaching `on_msg` at all. | `18bcf09`, follow-up commit |
+| S3-02 (Med) — thumbnail TOCTOU on async DMA | Deferred to Sprint 4 (`link_state_snapshot` + LovyanGFX wait). Still latent today (endWrite blocks). | backlog |
+| S3-03 (Med) — now_ms vs atomic load race | Deferred to Sprint 4 with the snapshot API. Compounded with reviewer F-07 (TOCTOU between query and idle_ms). | backlog |
+| S3-04 (Low) — DISCONNECTED SPI saturation | Deferred to Sprint 4 (dirty-rect repaint). | backlog |
+| S3-05 (Low) — FREEZE badge never erased | RESOLVED. `render_show_freeze` now positively repaints the badge strip from the front buffer on the blink-off half. Reviewer F-03 is the same finding. | follow-up commit |
+| S3-06 (Low) — `s_thumb` in BSS | Deferred to Sprint 4 (PSRAM-resident thumb). | backlog |
+| S3-07 (Low) — TOCTOU query+idle_ms | Deferred to Sprint 4 (snapshot API). | backlog |
+| S3-08 .. S3-10 (Info) | Informational. S3-09 stack budget OK as long as S3-02 mitigation stays PSRAM-based. | n/a |
