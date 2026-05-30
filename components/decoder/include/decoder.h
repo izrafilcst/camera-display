@@ -4,6 +4,9 @@
 
 /**
  * Initialise the esp_jpeg decoder (single shared handle, not thread-safe).
+ * Idempotent: a second call with a live handle is a no-op and returns true.
+ * To recover from a corrupted handle (post-crash), call decoder_deinit()
+ * first to release the broken state, then re-init.
  * @return true on success.
  */
 bool decoder_init(void);

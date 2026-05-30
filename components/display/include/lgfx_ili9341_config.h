@@ -67,7 +67,10 @@ public:
         {
             auto cfg = _light.config();
             cfg.pin_bl      = PIN_LCD_BL;
-            cfg.invert      = false;  // ver nota cfg.invert acima
+            // PWM polarity: false = HIGH on the pin turns the backlight ON.
+            // Swap to true for PNP/P-channel BL drive. Independent of the
+            // panel cfg.invert (pixel inversion) above.
+            cfg.invert      = false;
             cfg.freq        = 12000;
             cfg.pwm_channel = 7;
             _light.config(cfg);

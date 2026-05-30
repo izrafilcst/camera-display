@@ -9,8 +9,8 @@ add_executable(test_patterns
     ../test_patterns.cpp
 )
 
+target_compile_features(test_patterns PRIVATE cxx_std_17)
 target_compile_options(test_patterns PRIVATE
-    -std=c++17
     -Wall
     -Wextra
     -Werror
