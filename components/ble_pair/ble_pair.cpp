@@ -14,18 +14,34 @@
 
 #include "esp_log.h"
 #include "esp_mac.h"
+
+#include <cstring>
+
+// ---------------------------------------------------------------------------
+// Build gate: when BT/NimBLE is disabled (or the BT_ENABLED build is broken
+// on this hardware target, as is currently the case on ESP32-S3-N16R8 +
+// Octal PSRAM @ 80 MHz + IDF 6.0.1 where the chip hangs at "cpu_start:
+// Multicore app"), provide stubs so the rest of the firmware can still link
+// and use the CONFIG_RECEIVER_PEER_MAC override path.
+// ---------------------------------------------------------------------------
+#if !defined(CONFIG_BT_NIMBLE_ENABLED)
+
+void ble_pair_get_rx_mac(uint8_t out[6]) {
+    if (out) esp_read_mac(out, ESP_MAC_WIFI_STA);
+}
+
+bool ble_pair_run(uint32_t /*pin*/, uint8_t /*tx_mac_out*/[6],
+                  ble_pair_err_t* err_out) {
+    if (err_out) *err_out = BLE_PAIR_ERR_STACK_INIT;
+    return false;
+}
+
+#else  // CONFIG_BT_NIMBLE_ENABLED
+
 #include "esp_nimble_hci.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "nimble/nimble_port.h"
-#include "nimble/nimble_port_freertos.h"
-#include "host/ble_hs.h"
-#include "host/ble_uuid.h"
-#include "host/ble_gap.h"
-#include "host/util/util.h"
-#include "services/gap/ble_svc_gap.h"
-
-#include <cstring>
 
 static const char* TAG = "ble_pair";
 
@@ -397,3 +413,5 @@ bool ble_pair_run(uint32_t pin, uint8_t tx_mac_out[6], ble_pair_err_t* err_out) 
     *err_out = s_sm.err;
     return false;
 }
+
+#endif  // CONFIG_BT_NIMBLE_ENABLED

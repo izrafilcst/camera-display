@@ -36,20 +36,27 @@ CONFIG_COMPILER_WARN_WRITE_STRINGS=y
 # tearing stripes). Skips ESP-NOW / decode / link UI so the LCD can be
 # validated standalone before a transmitter is wired up. Disable
 # (CONFIG_RECEIVER_SMOKE_TEST=n) for the real video pipeline.
-CONFIG_RECEIVER_SMOKE_TEST=y
+CONFIG_RECEIVER_SMOKE_TEST=n
 
-# Sprint 4 — BLE pairing via NimBLE (CENTRAL/client role).
-# Wi-Fi controller stays enabled (we use both — BLE first for pairing,
-# then deinit and switch to Wi-Fi+ESP-NOW for video). Coexistence is
-# sequential, not concurrent.
-CONFIG_BT_ENABLED=y
-CONFIG_BT_NIMBLE_ENABLED=y
-CONFIG_BT_CONTROLLER_ENABLED=y
-CONFIG_BT_CONTROLLER_MODE_BLE_ONLY=y
+# Bypass BLE pair handshake using the TX MAC the user already captured
+# from the TX boot log. This is the Kconfig override path documented in
+# spec §11.5 — useful when BLE is failing or unavailable but the TX is
+# already running and broadcasting on Wi-Fi channel 6.
+CONFIG_RECEIVER_PEER_MAC="98:A3:16:F5:2C:94"
 
-# USB-Serial-JTAG + BT coexistence: the BT controller takes high-priority
-# interrupts on Core 0 which can stall the USB CDC ACM polling and lose
-# console output. Setting LOG_NO_BLOCK=y prevents the console from
-# blocking the caller when the USB endpoint isn't ready (logs may be
-# truncated but the firmware stays responsive).
+# Sprint 4 — BLE pairing via NimBLE was enabled here, but on this hw
+# combo (ESP32-S3-N16R8 + Octal PSRAM @ 80 MHz + IDF 6.0.1) merely
+# turning on CONFIG_BT_ENABLED freezes the chip at "cpu_start: Multicore
+# app" before main_task spawns — no panic, no logs, no progression.
+# Until that is root-caused (likely an IDF init-order or PSRAM heap
+# layout conflict), keep BT off and rely on CONFIG_RECEIVER_PEER_MAC
+# above to skip the BLE handshake. ble_pair.cpp is gated with
+# #if CONFIG_BT_NIMBLE_ENABLED so the build still works.
+#CONFIG_BT_ENABLED=y
+#CONFIG_BT_NIMBLE_ENABLED=y
+#CONFIG_BT_CONTROLLER_ENABLED=y
+#CONFIG_BT_CONTROLLER_MODE_BLE_ONLY=y
+
+# USB-Serial-JTAG: don't block the caller if the USB endpoint isn't ready
+# yet (the firmware stays responsive while a host attaches).
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG_LOG_NO_BLOCK=y
