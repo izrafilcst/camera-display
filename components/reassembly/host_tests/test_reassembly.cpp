@@ -62,7 +62,7 @@ static std::vector<uint8_t> make_frag(
         uint8_t  frag_idx,
         uint8_t  frag_total,
         uint16_t jpeg_size,
-        uint16_t payload_len,
+        uint8_t  payload_len,    // uint8_t per TX wire spec (was uint16_t)
         uint8_t  fill,
         uint32_t tx_ms = 0)
 {
@@ -142,20 +142,17 @@ static void test_req2_jpeg_size_above_max() {
 // REQ-2 row 5: h.payload_len > remaining bytes after headers → reject (OOB read)
 static void test_req2_payload_len_exceeds_remaining() {
     reassembly_init(2);
-    // Build a fragment where payload_len claims 200 but only 50 bytes follow the headers
+    // Build a non-frag-0 packet where payload_len claims 200 but only 50
+    // bytes follow the 7-byte video header. frag_idx>0 so no extra block.
     video_frag_hdr_t h{};
     h.frame_id   = 1;
-    h.frag_idx   = 0;
-    h.frag_total = 1;
-    h.jpeg_size  = 100;
-    h.payload_len = 200;  // claims 200 bytes of payload
-    video_frag0_extra_t e{};
-    e.tx_emission_ms = 0;
+    h.frag_idx   = 1;
+    h.frag_total = 2;
+    h.jpeg_size  = 800;
+    h.payload_len = 200;       // claims 200 bytes
     std::vector<uint8_t> buf;
     buf.insert(buf.end(), reinterpret_cast<uint8_t*>(&h),
                reinterpret_cast<uint8_t*>(&h) + sizeof(h));
-    buf.insert(buf.end(), reinterpret_cast<uint8_t*>(&e),
-               reinterpret_cast<uint8_t*>(&e) + sizeof(e));
     buf.insert(buf.end(), 50, 0xDD);  // only 50 bytes actual payload
     reassembled_frame_t out{};
     bool result = reassembly_push_frag(buf.data(), buf.size(), 0, &out);
@@ -203,60 +200,78 @@ static void test_req2_frag0_missing_extra() {
 // REQ-2 row 8: offset + payload_len > jpeg_size → reject (OOB write into slot)
 static void test_req2_offset_plus_len_exceeds_jpeg_size() {
     reassembly_init(2);
-    // Fragment 0 of 1: jpeg_size=100, payload_len=200 would write past jpeg_size.
-    // But we also need remaining bytes to be >= payload_len (avoid row5 rejection).
-    // So: jpeg_size=100, payload_len=101 (just over), and we provide 200 bytes.
-    video_frag_hdr_t h{};
-    h.frame_id   = 1;
-    h.frag_idx   = 0;
-    h.frag_total = 1;
-    h.jpeg_size  = 100;
-    h.payload_len = 101;  // 0 + 101 > 100 = jpeg_size → OOB write
-    video_frag0_extra_t e{};
-    e.tx_emission_ms = 0;
-    std::vector<uint8_t> buf;
-    buf.insert(buf.end(), reinterpret_cast<uint8_t*>(&h),
-               reinterpret_cast<uint8_t*>(&h) + sizeof(h));
-    buf.insert(buf.end(), reinterpret_cast<uint8_t*>(&e),
-               reinterpret_cast<uint8_t*>(&e) + sizeof(e));
-    buf.insert(buf.end(), 200, 0xFF);  // plenty of bytes so row5 doesn't trigger
+    // Non-frag-0 attacker: frag_idx=1 sits at offset 236 by the wire formula.
+    // jpeg_size=300 and payload_len=200 → 236+200 = 436 > 300 → must reject.
+    auto f = make_frag(1, 1 /*idx*/, 2 /*total*/, 300, 200, 0xFF);
     reassembled_frame_t out{};
-    bool result = reassembly_push_frag(buf.data(), buf.size(), 0, &out);
+    bool result = reassembly_push_frag(f.data(), f.size(), 0, &out);
     ASSERT_FALSE(result, "req2-row8: offset+payload_len > jpeg_size must be rejected");
     ASSERT_EQ(reassembly_stats()->fragments_invalid, 1u,
               "req2-row8: fragments_invalid incremented");
     PASS("REQ-2 row8: offset + payload_len > jpeg_size rejected");
 }
 
+// Wire-cap on payload_len: frag 0 must have payload_len <= 236.
+static void test_req2_frag0_payload_above_cap() {
+    reassembly_init(2);
+    // jpeg_size large enough that the row-8 check wouldn't trip, but
+    // payload_len=237 violates the frag-0 per-fragment cap.
+    auto f = make_frag(1, 0, 2, 1000, 237, 0xAB, 7);
+    reassembled_frame_t out{};
+    bool result = reassembly_push_frag(f.data(), f.size(), 0, &out);
+    ASSERT_FALSE(result, "frag 0 payload_len > 236 must be rejected");
+    ASSERT_EQ(reassembly_stats()->fragments_invalid, 1u,
+              "frag 0 per-cap: fragments_invalid incremented");
+    PASS("frag 0 payload_len > FRAG_DATA_MAX_0 (236) rejected");
+}
+
+// Wire-cap on payload_len: frag N > 0 must have payload_len <= 240.
+static void test_req2_fragN_payload_above_cap() {
+    reassembly_init(2);
+    // frag_idx=1, payload_len=241 violates the non-frag-0 per-fragment cap.
+    auto f = make_frag(2, 1, 2, 1000, 241, 0xCD);
+    reassembled_frame_t out{};
+    bool result = reassembly_push_frag(f.data(), f.size(), 0, &out);
+    ASSERT_FALSE(result, "frag>0 payload_len > 240 must be rejected");
+    ASSERT_EQ(reassembly_stats()->fragments_invalid, 1u,
+              "frag N per-cap: fragments_invalid incremented");
+    PASS("frag N payload_len > FRAG_DATA_MAX_N (240) rejected");
+}
+
 // ===========================================================================
 // REQ-3: jpeg_size at boundary conditions
 // ===========================================================================
 
-// REQ-3: jpeg_size == MAX_JPEG_SIZE should be accepted (boundary)
+// REQ-3: jpeg_size == MAX_JPEG_SIZE should be accepted at the upper boundary.
+// We can't actually deliver this in a single frag (236 bytes max), so use
+// frag_total=64 declaration. The test only validates header acceptance —
+// reassembly completion isn't required here.
 static void test_req3_jpeg_size_at_max_accepted() {
     reassembly_init(2);
-    // Single-frag frame where jpeg_size == MAX_JPEG_SIZE exactly.
-    // payload_len limited to 200 so we don't need a huge buffer in the test.
-    uint16_t jsz = static_cast<uint16_t>(MAX_JPEG_SIZE);
-    auto f = make_frag(10, 0, 1, jsz, 200, 0x55);
+    uint16_t jsz = static_cast<uint16_t>(MAX_JPEG_SIZE);  // 15356 with wire formula
+    // Frag 0 of MAX_FRAGS_PER_FRAME — fills positions 0..235.
+    auto f = make_frag(10, 0, 64, jsz, FRAG_DATA_MAX_0, 0x55);
     reassembled_frame_t out{};
     bool result = reassembly_push_frag(f.data(), f.size(), 0, &out);
-    // jpeg_size == MAX_JPEG_SIZE is valid; frame completes (total==1, idx==0)
-    ASSERT_TRUE(result, "req3: jpeg_size==MAX_JPEG_SIZE should be accepted");
-    reassembly_release(&out);
+    // First frag of a 64-frag frame doesn't complete; the call should
+    // accept it (return false meaning "no completion yet" but no error).
+    ASSERT_FALSE(result, "req3: first frag of MAX_JPEG_SIZE frame must not complete");
+    ASSERT_EQ(reassembly_stats()->fragments_invalid, 0u,
+              "req3: MAX_JPEG_SIZE header must be accepted (no invalid count)");
     PASS("REQ-3: jpeg_size==MAX_JPEG_SIZE accepted");
 }
 
-// REQ-3: jpeg_size in [12K,16K) band — accepted but should emit warn log
+// REQ-3: jpeg_size in [12K,15K) band — accepted but should emit warn log
 static void test_req3_jpeg_size_warn_band_accepted() {
     reassembly_init(2);
-    uint16_t jsz = 13 * 1024;  // 13 KiB — in [12K,16K) band
-    auto f = make_frag(11, 0, 1, jsz, 200, 0x66);
+    uint16_t jsz = 13 * 1024;  // 13 KiB — in [12K, MAX_JPEG_SIZE) band
+    auto f = make_frag(11, 0, 64, jsz, FRAG_DATA_MAX_0, 0x66);
     reassembled_frame_t out{};
     bool result = reassembly_push_frag(f.data(), f.size(), 0, &out);
-    ASSERT_TRUE(result, "req3: jpeg_size in [12K,16K) band should be accepted (warn only)");
-    reassembly_release(&out);
-    PASS("REQ-3: jpeg_size in [12K,16K) warn band accepted");
+    ASSERT_FALSE(result, "req3: warn-band single frag must not complete a 64-frag frame");
+    ASSERT_EQ(reassembly_stats()->fragments_invalid, 0u,
+              "req3: warn-band header must be accepted");
+    PASS("REQ-3: jpeg_size in [12K,MAX_JPEG_SIZE) warn band accepted");
 }
 
 // ===========================================================================
@@ -280,31 +295,34 @@ static void test_happy_single_fragment() {
     PASS("happy: single-fragment frame completes immediately");
 }
 
-// Two-fragment frame completes on second fragment
+// Two-fragment frame completes on second fragment.
+// Wire-spec sizing: frag 0 carries 236 bytes (its max), frag 1 carries the
+// remainder. Total jpeg_size = 236 + 100 = 336.
 static void test_happy_two_fragment_in_order() {
     reassembly_init(2);
-    auto f0 = make_frag(2, 0, 2, 300, 200, 0x11, 9999);
-    auto f1 = make_frag(2, 1, 2, 300, 100, 0x22);
+    auto f0 = make_frag(2, 0, 2, 336, 236, 0x11, 9999);
+    auto f1 = make_frag(2, 1, 2, 336, 100, 0x22);
     reassembled_frame_t out{};
     bool r0 = reassembly_push_frag(f0.data(), f0.size(), 0, &out);
     ASSERT_FALSE(r0, "happy-2frag: first frag does not complete");
     bool r1 = reassembly_push_frag(f1.data(), f1.size(), 5, &out);
     ASSERT_TRUE(r1, "happy-2frag: second frag completes frame");
-    ASSERT_EQ(out.jpeg_size,      300u,  "happy-2frag: jpeg_size correct");
+    ASSERT_EQ(out.jpeg_size,      336u,  "happy-2frag: jpeg_size correct");
     ASSERT_EQ(out.jpeg_data[0],   0x11u, "happy-2frag: first byte from frag 0");
-    ASSERT_EQ(out.jpeg_data[200], 0x22u, "happy-2frag: first byte from frag 1");
+    ASSERT_EQ(out.jpeg_data[236], 0x22u, "happy-2frag: first byte from frag 1 at wire offset 236");
     reassembly_release(&out);
     PASS("happy: two-fragment frame completes on second");
 }
 
-// Four fragments arriving out of order (2,0,3,1) still complete
+// Four fragments arriving out of order (2,0,3,1) still complete.
+// Wire-spec sizing: frag 0=236, frags 1..2=240 (full), frag 3=100 (runt).
+// Total jpeg_size = 236 + 240 + 240 + 100 = 816.
 static void test_happy_out_of_order_four_frags() {
     reassembly_init(2);
-    // Each frag carries 50 bytes; total jpeg_size = 200
-    auto f0 = make_frag(20, 0, 4, 200, 50, 0xA0, 100);
-    auto f1 = make_frag(20, 1, 4, 200, 50, 0xB0);
-    auto f2 = make_frag(20, 2, 4, 200, 50, 0xC0);
-    auto f3 = make_frag(20, 3, 4, 200, 50, 0xD0);
+    auto f0 = make_frag(20, 0, 4, 816, 236, 0xA0, 100);
+    auto f1 = make_frag(20, 1, 4, 816, 240, 0xB0);
+    auto f2 = make_frag(20, 2, 4, 816, 240, 0xC0);
+    auto f3 = make_frag(20, 3, 4, 816, 100, 0xD0);
     reassembled_frame_t out{};
     // Arrive in order: 2,0,3,1
     ASSERT_FALSE(reassembly_push_frag(f2.data(), f2.size(), 0, &out), "ooo: frag2 no complete");
@@ -312,10 +330,11 @@ static void test_happy_out_of_order_four_frags() {
     ASSERT_FALSE(reassembly_push_frag(f3.data(), f3.size(), 0, &out), "ooo: frag3 no complete");
     bool done = reassembly_push_frag(f1.data(), f1.size(), 0, &out);
     ASSERT_TRUE(done, "ooo: last frag (1) completes frame");
+    // Wire offsets per spec: 0, 236, 476, 716
     ASSERT_EQ(out.jpeg_data[0],   0xA0u, "ooo: byte 0 from frag0");
-    ASSERT_EQ(out.jpeg_data[50],  0xB0u, "ooo: byte 50 from frag1");
-    ASSERT_EQ(out.jpeg_data[100], 0xC0u, "ooo: byte 100 from frag2");
-    ASSERT_EQ(out.jpeg_data[150], 0xD0u, "ooo: byte 150 from frag3");
+    ASSERT_EQ(out.jpeg_data[236], 0xB0u, "ooo: byte 236 from frag1");
+    ASSERT_EQ(out.jpeg_data[476], 0xC0u, "ooo: byte 476 from frag2");
+    ASSERT_EQ(out.jpeg_data[716], 0xD0u, "ooo: byte 716 from frag3");
     reassembly_release(&out);
     PASS("happy: four fragments arriving 2,0,3,1 complete correctly");
 }
@@ -323,7 +342,8 @@ static void test_happy_out_of_order_four_frags() {
 // Timeout drops incomplete slot
 static void test_timeout_drops_incomplete_frame() {
     reassembly_init(2);
-    auto f0 = make_frag(3, 0, 2, 200, 100, 0xCC, 1);
+    // 2-frag frame with realistic wire sizes: 236 + 100 = 336.
+    auto f0 = make_frag(3, 0, 2, 336, 100, 0xCC, 1);
     reassembled_frame_t out{};
     reassembly_push_frag(f0.data(), f0.size(), 0, &out);
     // Advance time past SKIP_DROP_TIMEOUT_MS (30 ms)
@@ -338,9 +358,10 @@ static void test_overrun_evicts_oldest_slot() {
     reassembly_init(2);
     uint8_t d[100];
     memset(d, 0xCC, sizeof(d));
-    auto f_a = make_frag(10, 0, 2, 200, 100, 0xCC, 0);
-    auto f_b = make_frag(11, 0, 2, 200, 100, 0xCC, 0);
-    auto f_c = make_frag(12, 0, 2, 200, 100, 0xCC, 0);
+    // 2-frag frames, wire-correct: 236 (frag 0 cap) + 100 = 336.
+    auto f_a = make_frag(10, 0, 2, 336, 100, 0xCC, 0);
+    auto f_b = make_frag(11, 0, 2, 336, 100, 0xCC, 0);
+    auto f_c = make_frag(12, 0, 2, 336, 100, 0xCC, 0);
     reassembled_frame_t out{};
     reassembly_push_frag(f_a.data(), f_a.size(), 0,  &out);  // slot 0 = frame 10
     reassembly_push_frag(f_b.data(), f_b.size(), 1,  &out);  // slot 1 = frame 11
@@ -399,7 +420,7 @@ static void test_req4_telemetry_seq_is_u32() {
 // ===========================================================================
 
 int main() {
-    fprintf(stdout, "\n=== REQ-2: malformed fragment rejection (8 conditions) ===\n");
+    fprintf(stdout, "\n=== REQ-2: malformed fragment rejection ===\n");
     test_req2_truncated_header();
     test_req2_frag_total_zero();
     test_req2_frag_idx_gte_total();
@@ -408,6 +429,8 @@ int main() {
     test_req2_payload_len_zero();
     test_req2_frag0_missing_extra();
     test_req2_offset_plus_len_exceeds_jpeg_size();
+    test_req2_frag0_payload_above_cap();
+    test_req2_fragN_payload_above_cap();
 
     fprintf(stdout, "\n=== REQ-3: jpeg_size boundary ===\n");
     test_req3_jpeg_size_at_max_accepted();

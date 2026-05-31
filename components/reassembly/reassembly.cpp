@@ -106,16 +106,17 @@ static slot_t* alloc_slot(uint32_t now_ms) {
 }
 
 // Calculate byte offset of fragment frag_idx in the assembled JPEG buffer.
-// Wire contract: all non-final fragments carry equal payload size; only the
-// last fragment may be shorter (the runt). Deriving offset purely from the
-// fragment's own header makes the result independent of arrival order.
-static size_t calc_offset(uint8_t frag_idx, uint8_t frag_total,
-                          uint16_t payload_len, uint16_t jpeg_size) {
-    if (frag_idx == frag_total - 1) {
-        // Last fragment: pinned to the tail of the assembled buffer
-        return static_cast<size_t>(jpeg_size) - payload_len;
-    }
-    return static_cast<size_t>(frag_idx) * payload_len;
+// Wire contract (TX spec):
+//   offset(0)   = 0
+//   offset(N>0) = 236 + (N - 1) * 240
+// Fragment 0 always carries up to 236 bytes (the 4 bytes of tx_emission_ms
+// eat into the 240-byte data budget); subsequent fragments carry up to 240.
+// Only the LAST fragment may be shorter. The receiver doesn't have to know
+// payload_len to place the data — the position is fully determined by
+// frag_idx, so offsets are correct regardless of arrival order.
+static size_t calc_offset(uint8_t frag_idx) {
+    if (frag_idx == 0) return 0;
+    return FRAG_DATA_MAX_0 + (static_cast<size_t>(frag_idx) - 1u) * FRAG_DATA_MAX_N;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,6 +175,15 @@ bool reassembly_push_frag(const uint8_t* payload, size_t len,
         return false;
     }
 
+    // Wire-contract cap on payload_len: frag 0 carries at most 236 bytes,
+    // other fragments at most 240. Anything larger is a malformed packet
+    // (uint8_t allows up to 255 but TX never emits more than the cap).
+    const size_t per_frag_cap = (h.frag_idx == 0) ? FRAG_DATA_MAX_0 : FRAG_DATA_MAX_N;
+    if (h.payload_len > per_frag_cap) {
+        s_stats.fragments_invalid++;
+        return false;
+    }
+
     // REQ-2 row 7: frag_idx == 0 and not enough bytes for extra header
     uint32_t tx_ms = 0;
     if (h.frag_idx == 0) {
@@ -211,18 +221,12 @@ bool reassembly_push_frag(const uint8_t* payload, size_t len,
         s->tx_emission_ms = tx_ms;
     }
 
-    // Precondition for calc_offset: payload_len must fit within jpeg_size.
-    // Without this, the last-fragment offset formula (jpeg_size - payload_len)
-    // underflows as size_t and silently bypasses the REQ-2 row-8 OOB check.
-    if (h.payload_len > h.jpeg_size) {
-        s_stats.fragments_invalid++;
-        return false;
-    }
+    // Offset is a pure function of frag_idx (TX wire formula).
+    const size_t offset = calc_offset(h.frag_idx);
 
-    // Offset is derived from the fragment's own header — arrival-order independent
-    size_t offset = calc_offset(h.frag_idx, h.frag_total, h.payload_len, h.jpeg_size);
-
-    // REQ-2 row 8: offset + payload_len > jpeg_size (OOB write into slot)
+    // REQ-2 row 8: offset + payload_len > jpeg_size (OOB write into slot).
+    // Also catches the case where frag 0 carries more bytes than fit in the
+    // declared frame, since offset(0)==0 makes this reduce to payload>jpeg.
     if (offset + h.payload_len > h.jpeg_size) {
         s_stats.fragments_invalid++;
         return false;

@@ -55,11 +55,24 @@ In `reassembly_push_frag`, all of these inputs MUST cause early return with no s
 | `len < sizeof(video_frag_hdr_t)` | Truncated header — already in plan |
 | `h.frag_total == 0` | Divide/modulo-by-zero risk in any callers iterating offsets |
 | `h.frag_idx >= h.frag_total` | Would write past end-of-slot |
+| `h.frag_total > MAX_FRAGS_PER_FRAME` | Bitmap overflow |
 | `h.jpeg_size > MAX_JPEG_SIZE` | Heap overflow if memcpy'd into slot |
 | `h.payload_len > remaining bytes after headers` | OOB read from RX buffer |
-| `h.payload_len == 0` (except as terminator) | Wastes a fragment slot; suspicious |
+| `h.payload_len == 0` | Wastes a fragment slot; suspicious |
+| `h.frag_idx == 0 && h.payload_len > FRAG_DATA_MAX_0` (236) | Violates TX wire cap |
+| `h.frag_idx > 0  && h.payload_len > FRAG_DATA_MAX_N` (240) | Violates TX wire cap |
 | `h.frag_idx == 0 && len < sizeof(video_frag_hdr_t) + sizeof(video_frag0_extra_t)` | Missing tx_emission_ms |
 | `offset + h.payload_len > h.jpeg_size` | Per-fragment OOB write into slot |
+
+**Wire-format note** (corrected post-S3 with the actual TX spec):
+`video_frag_hdr_t` is **7 bytes**, with `payload_len` as `uint8_t` (not
+uint16_t). Fragment 0 carries up to 236 bytes (4 of which would have been
+data if not for `tx_emission_ms`); fragments 1..N carry up to 240. The
+position of fragment N in the assembled JPEG buffer is fixed by the wire
+formula `offset(N) = (N==0) ? 0 : 236 + (N-1)*240`, regardless of arrival
+order or per-fragment `payload_len`. `MAX_JPEG_SIZE` is therefore the
+exact wire ceiling `236 + 63*240 = 15356` bytes, not a generous receiver
+budget — `static_assert(MAX_JPEG_SIZE == 15356)` enforces this.
 
 The Sprint 2 plan Task 3 already covers most of these — this section enforces full coverage. A test case must exist for each row in the host-side Unity tests.
 
@@ -73,19 +86,19 @@ The Sprint 2 plan Task 3 already covers most of these — this section enforces 
 
 ### REQ-4 — Widen telemetry `seq` from `uint8_t` to `uint32_t`
 
-Spec §5.5 currently defines `MSG_TELEMETRY` payload with `uint8_t seq`. A single-byte sequence number wraps every 256 packets — at 2 Hz that's 128 seconds before wraparound, trivially replayable.
+Spec §5.5 originally defined `MSG_TELEMETRY` payload with `uint8_t seq`. A single-byte sequence number wraps every 256 packets — at 2 Hz that's 128 seconds before wraparound, trivially replayable.
 
-**Action**: edit spec `docs/superpowers/specs/2026-05-26-receptor-design.md` §5.5 and the corresponding C struct in `wire_types.h` / `telemetry.h` to use:
+**Resolution (final)**: seq moved into the per-message body
+(`telemetry_rx_to_tx::seq` is `uint32_t`); `esnow_hdr_t` stays at 2 bytes.
+The second byte of `esnow_hdr_t` is the **ESP-NOW layer seq** the TX
+emits (uint8 with wrap) — it is informational only and NOT used for
+replay protection. Per-msg-type replay protection (`check_and_update_seq`
+in `espnow_link.cpp`) uses the 32-bit seq from the body. `MSG_VIDEO_FRAG`
+intentionally has no replay window (the wire format has no room for one);
+liveness is therefore gated on successful JPEG decode in `decode_task`
+(see Sprint 3 audit S3-01 resolution).
 
-```c
-struct __attribute__((packed)) esnow_hdr_t {
-    uint8_t  msg_type;
-    uint8_t  reserved;   // alignment / future use
-    uint32_t seq;
-};
-```
-
-…or move `seq` into the per-message body (recommended; keeps `esnow_hdr_t` at 2 B). Replay protection:
+Replay window for telemetry:
 - Track `last_seq_per_msg_type` in RAM
 - Reject if `(received_seq - last_seq) > REPLAY_WINDOW` (suggest 32) AND `received_seq < last_seq`
 
