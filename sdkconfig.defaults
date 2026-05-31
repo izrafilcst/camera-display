@@ -11,9 +11,13 @@ CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_IN_PSRAM=y
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_FREERTOS_HZ=1000
-# Avoid USB-CDC boot stall when no USB host is connected
-CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+# Console output via built-in USB-Serial-JTAG (appears as /dev/ttyACM* on Linux).
+# This is the hardware USB-Serial-JTAG peripheral — NOT TinyUSB CDC (which
+# stalls when no host is connected). Lets us flash + monitor through the
+# single native USB port on bare ESP32-S3 modules.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_CONSOLE_USB_CDC=n
+CONFIG_ESP_CONSOLE_UART_DEFAULT=n
 
 # Security hardening (audit S-01) — explicit brownout protection
 # Rationale: 80 MHz SPI + Octal PSRAM + Wi-Fi (Sprint 2) creates rail sag;
@@ -27,3 +31,9 @@ CONFIG_ESP_BROWNOUT_DET_LVL_SEL_7=y
 CONFIG_COMPILER_STACK_CHECK=y
 CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y
 CONFIG_COMPILER_WARN_WRITE_STRINGS=y
+
+# Smoke-test mode: display-only demo loop (color bars / gradient / checker /
+# tearing stripes). Skips ESP-NOW / decode / link UI so the LCD can be
+# validated standalone before a transmitter is wired up. Disable
+# (CONFIG_RECEIVER_SMOKE_TEST=n) for the real video pipeline.
+CONFIG_RECEIVER_SMOKE_TEST=y

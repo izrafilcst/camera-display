@@ -1,0 +1,15 @@
+menu "Receiver app"
+
+config RECEIVER_SMOKE_TEST
+    bool "Smoke test mode (display-only demo, bypasses ESP-NOW and decode)"
+    default n
+    help
+        When enabled, app_main cycles the Sprint 1 test patterns
+        (color bars, gradient, checker, tearing stripes) on the LCD
+        and DOES NOT start ESP-NOW, reassembly, decoder, or link_ui
+        tasks. Use this to validate display, PSRAM framebuffer,
+        LovyanGFX DMA, panel colors and tearing on the physical board
+        before a transmitter is available. Disable for the real
+        video pipeline.
+
+endmenu

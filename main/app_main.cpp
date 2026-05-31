@@ -1,5 +1,7 @@
 // Sprint 2 — Video pipeline: ESP-NOW RX → reassembly → JPEG decode → display
 // REQ-5: peer MAC loaded from Kconfig with placeholder warning at boot.
+// CONFIG_RECEIVER_SMOKE_TEST swaps the network path for a Sprint 1 demo loop
+// so the display can be validated standalone before a transmitter is wired up.
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -7,6 +9,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "sdkconfig.h"
 #include "display.h"
 #include "espnow_link.h"
 #include "reassembly.h"
@@ -16,6 +19,16 @@
 #include "wire_types.h"
 #include "pinout.h"
 #include <cstring>
+
+#if CONFIG_RECEIVER_SMOKE_TEST
+// Test-pattern helpers live in components/display/test_patterns.cpp. They're
+// not part of the public display.h API (Sprint 1 review F3), so forward-declare
+// here only inside the smoke-test build.
+extern void pattern_color_bars(uint16_t* buf);
+extern void pattern_gradient(uint16_t* buf);
+extern void pattern_checker(uint16_t* buf, int cell_px);
+extern void pattern_tearing_stripes(uint16_t* buf, uint32_t frame_counter);
+#endif
 
 static const char* TAG = "main";
 
@@ -130,6 +143,39 @@ extern "C" void app_main(void) {
     ESP_LOGI(TAG, "Sprint 3 boot — free heap=%u",
              (unsigned)esp_get_free_heap_size());
 
+#if CONFIG_RECEIVER_SMOKE_TEST
+    // -----------------------------------------------------------------------
+    // Smoke test mode: display + render only. Skip ESP-NOW / decode / link UI.
+    // -----------------------------------------------------------------------
+    ESP_LOGW(TAG, "SMOKE TEST MODE — bypassing espnow/decode/link_ui");
+    if (!display_init(LCD_SPI_HZ_TARGET)) {
+        ESP_LOGE(TAG, "display_init failed");
+        return;
+    }
+    if (!render_init()) {
+        ESP_LOGE(TAG, "render_init failed");
+        return;
+    }
+    uint32_t frame = 0;
+    while (true) {
+        uint16_t* back = render_back_buffer();
+        const uint32_t which = (frame / 60u) % 4u;   // ~2 s per pattern at 30 fps
+        switch (which) {
+            case 0: pattern_color_bars(back);           break;
+            case 1: pattern_gradient(back);             break;
+            case 2: pattern_checker(back, 20);          break;
+            case 3: pattern_tearing_stripes(back, frame); break;
+        }
+        render_present();
+        if ((frame % 30u) == 0u) {
+            ESP_LOGI(TAG, "smoke: frame=%u pattern=%u free_psram=%u",
+                     (unsigned)frame, (unsigned)which,
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        }
+        vTaskDelay(pdMS_TO_TICKS(33));
+        frame++;
+    }
+#else
     // REQ-5: parse Kconfig MAC and warn if placeholder
     uint8_t tx_mac[6];
     if (!parse_peer_mac(CONFIG_RECEIVER_PEER_MAC, tx_mac)) {
@@ -191,4 +237,5 @@ extern "C" void app_main(void) {
                  (unsigned)s->fragments_invalid,
                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     }
+#endif  // CONFIG_RECEIVER_SMOKE_TEST
 }
