@@ -1,0 +1,19 @@
+menu "BLE pairing"
+
+config BLE_SCAN_TIMEOUT_S
+    int "BLE scan timeout (seconds)"
+    default 30
+    range 5 300
+    help
+        How long ble_pair_run() will scan for a CAM-TX advertisement
+        before returning SCAN_TIMEOUT. The TX should be powered on first.
+
+config RECEIVER_FORCE_PAIR_AGAIN
+    bool "Wipe pairing NVS at boot and pair again"
+    default n
+    help
+        Useful during development. When set, app_main calls
+        pair_nvs_clear() before checking for a saved TX MAC, so the
+        device always re-runs the BLE handshake. Disable for normal use.
+
+endmenu

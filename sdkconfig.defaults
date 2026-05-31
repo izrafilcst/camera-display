@@ -36,4 +36,13 @@ CONFIG_COMPILER_WARN_WRITE_STRINGS=y
 # tearing stripes). Skips ESP-NOW / decode / link UI so the LCD can be
 # validated standalone before a transmitter is wired up. Disable
 # (CONFIG_RECEIVER_SMOKE_TEST=n) for the real video pipeline.
-CONFIG_RECEIVER_SMOKE_TEST=y
+CONFIG_RECEIVER_SMOKE_TEST=n
+
+# Sprint 4 — BLE pairing via NimBLE (CENTRAL/client role).
+# Wi-Fi controller stays enabled (we use both — BLE first for pairing,
+# then deinit and switch to Wi-Fi+ESP-NOW for video). Coexistence is
+# sequential, not concurrent.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_CONTROLLER_ENABLED=y
+CONFIG_BT_CONTROLLER_MODE_BLE_ONLY=y

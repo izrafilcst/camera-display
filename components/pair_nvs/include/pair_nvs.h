@@ -1,6 +1,5 @@
 #pragma once
 #include <cstdint>
-#include <cstdbool>
 
 #ifdef __cplusplus
 extern "C" {

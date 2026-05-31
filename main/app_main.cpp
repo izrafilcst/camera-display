@@ -16,6 +16,8 @@
 #include "decoder.h"
 #include "render.h"
 #include "link_state.h"
+#include "ble_pair.h"
+#include "pair_nvs.h"
 #include "wire_types.h"
 #include "pinout.h"
 #include <cstring>
@@ -140,7 +142,7 @@ static void link_ui_task(void*) {
 // app_main
 // ---------------------------------------------------------------------------
 extern "C" void app_main(void) {
-    ESP_LOGI(TAG, "Sprint 3 boot — free heap=%u",
+    ESP_LOGI(TAG, "Sprint 4 boot — free heap=%u",
              (unsigned)esp_get_free_heap_size());
 
 #if CONFIG_RECEIVER_SMOKE_TEST
@@ -176,15 +178,60 @@ extern "C" void app_main(void) {
         frame++;
     }
 #else
-    // REQ-5: parse Kconfig MAC and warn if placeholder
-    uint8_t tx_mac[6];
-    if (!parse_peer_mac(CONFIG_RECEIVER_PEER_MAC, tx_mac)) {
-        ESP_LOGE(TAG, "CONFIG_RECEIVER_PEER_MAC parse failed: '%s'",
-                 CONFIG_RECEIVER_PEER_MAC);
+    // -----------------------------------------------------------------------
+    // Boot rota — precedência (spec §11.5):
+    //   1. SMOKE_TEST (acima, já filtrado pelo ifdef)
+    //   2. FORCE_PAIR_AGAIN -> wipe NVS e re-pareia
+    //   3. CONFIG_RECEIVER_PEER_MAC não-placeholder -> override sem pareamento
+    //   4. NVS paired                                -> Fase 2 direto
+    //   5. caso contrário                            -> BLE pair (Fase 1)
+    // -----------------------------------------------------------------------
+    if (!pair_nvs_init()) {
+        ESP_LOGE(TAG, "pair_nvs_init failed");
         return;
     }
-    if (peer_mac_is_placeholder(tx_mac)) {
-        ESP_LOGW(TAG, "*** PEER MAC IS PLACEHOLDER — set CONFIG_RECEIVER_PEER_MAC ***");
+
+#if CONFIG_RECEIVER_FORCE_PAIR_AGAIN
+    ESP_LOGW(TAG, "FORCE_PAIR_AGAIN — wiping pairing NVS");
+    pair_nvs_clear();
+#endif
+
+    uint8_t tx_mac[6] = {};
+    bool have_tx_mac = false;
+
+    // Kconfig override (útil para teste com ESP-NOW sem TX BLE)
+    uint8_t override_mac[6];
+    if (parse_peer_mac(CONFIG_RECEIVER_PEER_MAC, override_mac)
+        && !peer_mac_is_placeholder(override_mac)) {
+        ESP_LOGW(TAG, "using CONFIG_RECEIVER_PEER_MAC override (no BLE pairing)");
+        std::memcpy(tx_mac, override_mac, 6);
+        have_tx_mac = true;
+    }
+
+    // Tenta NVS pareado
+    if (!have_tx_mac && pair_nvs_load_tx_mac(tx_mac)) {
+        ESP_LOGI(TAG, "using saved peer: %02X:%02X:%02X:%02X:%02X:%02X",
+                 tx_mac[0], tx_mac[1], tx_mac[2], tx_mac[3], tx_mac[4], tx_mac[5]);
+        have_tx_mac = true;
+    }
+
+    // Sem NVS e sem override → roda Fase 1 (BLE pair)
+    if (!have_tx_mac) {
+        ESP_LOGI(TAG, "no paired TX in NVS — running BLE pairing handshake");
+        ble_pair_err_t pair_err;
+        if (!ble_pair_run(CONFIG_RECEIVER_PAIRING_PIN, tx_mac, &pair_err)) {
+            ESP_LOGE(TAG, "pairing failed: %s — rebooting in 5s",
+                     ble_pair_err_str(pair_err));
+            vTaskDelay(pdMS_TO_TICKS(5000));
+            esp_restart();
+        }
+        if (!pair_nvs_save_tx_mac(tx_mac)) {
+            ESP_LOGE(TAG, "pair_nvs_save_tx_mac rejected MAC — rebooting in 5s");
+            vTaskDelay(pdMS_TO_TICKS(5000));
+            esp_restart();
+        }
+        ESP_LOGI(TAG, "paired: %02X:%02X:%02X:%02X:%02X:%02X — saved to NVS",
+                 tx_mac[0], tx_mac[1], tx_mac[2], tx_mac[3], tx_mac[4], tx_mac[5]);
     }
 
     link_state_init();
