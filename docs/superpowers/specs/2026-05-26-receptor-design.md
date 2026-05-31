@@ -416,9 +416,87 @@ Critérios originais do CLAUDE.md ajustados para realismo do pipeline:
 
 ---
 
-## 11. Fora de escopo (V0)
+## 11. Pareamento BLE (Fase 1 do handshake com o TX)
 
-- Pairing BLE inicial + chaves PMK/LMK ESP-NOW (vai para Plano 2)
+> Esta seção foi adicionada em 2026-05-31 após o usuário fornecer o protocolo
+> real do TX. Substitui a antiga linha "Pairing BLE inicial (vai para Plano 2)"
+> que estava em §11 — pareamento BLE entra no V0 obrigatoriamente.
+
+### 11.1 Resumo
+
+O TX que ainda não foi pareado anuncia como BLE peripheral. O RX age como
+**CENTRAL/client**, completa o handshake e persiste o MAC do TX em NVS para
+pular o pareamento nos boots seguintes.
+
+### 11.2 Advertising e GATT
+
+- Nome do advertisement: `CAM-TX`
+- Serviço GATT primário UUID: `0x1234`
+- Characteristics:
+
+| UUID | Prop | Direção | Conteúdo |
+|---|---|---|---|
+| `0x1235` | Write | RX → TX | PIN: `uint32` little-endian (4 bytes) |
+| `0x1236` | Write | RX → TX | MAC do RX (6 bytes), só aceito após PIN correto |
+| `0x1237` | Read  | RX ← TX | MAC do TX (6 bytes) |
+
+### 11.3 Sequência (Fase 1)
+
+1. RX scan BLE, acha device com nome `CAM-TX`
+2. RX conecta
+3. RX descobre serviço `0x1234` e suas 3 chrs
+4. RX escreve o PIN em `0x1235`
+   - PIN padrão: `1234` (LE: `D2 04 00 00`)
+   - Erro do TX se PIN incorreto: `BLE_ATT_ERR_WRITE_NOT_PERMITTED`
+5. RX lê `0x1237` para obter MAC do TX (6 bytes) — guarda como peer ESP-NOW
+6. RX escreve próprio MAC (Wi-Fi STA, via `esp_read_mac(ESP_MAC_WIFI_STA)`) em `0x1236`
+   - Erro do TX se passo 4 não foi feito: `BLE_ATT_ERR_INSUFFICIENT_AUTHEN`
+7. Após escrita do MAC bem-sucedida:
+   - TX salva MAC do RX em NVS, desconecta BLE, desliga stack BLE, sobe Wi-Fi + ESP-NOW canal 6, começa a transmitir vídeo
+   - RX salva MAC do TX em NVS e nos próximos boots pula direto para a Fase 2 (recepção ESP-NOW)
+
+### 11.4 Estados do RX no pareamento
+
+`IDLE → SCANNING → CONNECTING → DISCOVERING → WRITING_PIN → READING_TX_MAC → WRITING_RX_MAC → DONE`
+
+Erros são absorvidos em `ERROR` com discriminante (`SCAN_TIMEOUT`,
+`PIN_REJECTED`, `RX_MAC_AUTH`, etc.). Política: log + `vTaskDelay(5s)` +
+`esp_restart()` para tentar de novo. Sprint 4 detalha em
+`docs/superpowers/plans/2026-05-31-sprint-4-ble-pairing.md`.
+
+### 11.5 Persistência
+
+- NVS namespace: `pairing`
+- Keys: `tx_mac` (blob 6B), `paired` (u8 sentinel)
+- Boot decide rota:
+  - `CONFIG_RECEIVER_SMOKE_TEST=y` → demo loop (ignora pareamento)
+  - `CONFIG_RECEIVER_FORCE_PAIR_AGAIN=y` → wipe NVS e re-pareia
+  - `CONFIG_RECEIVER_PEER_MAC` não-placeholder → override sem pareamento (testes sem TX)
+  - Else NVS pareado → Fase 2 direto
+  - Else → BLE pair (Fase 1)
+
+### 11.6 Constantes (espelhar nas duas pontas)
+
+```c
+#define BLE_DEVICE_NAME   "CAM-TX"
+#define PAIR_SVC_UUID     0x1234
+#define CHR_PIN_UUID      0x1235
+#define CHR_RX_MAC_UUID   0x1236
+#define CHR_TX_MAC_UUID   0x1237
+#define PAIRING_PIN       1234   // Kconfig RECEIVER_PAIRING_PIN
+```
+
+### 11.7 V0 não inclui
+
+- Criptografia ESP-NOW (PMK/LMK) — TX ainda não suporta; depende de Sprint 8
+- BLE bonding / LE Secure Connections — depende de TX implementar
+- Encrypted NVS — Sprint 8 junto com flash encryption
+
+---
+
+## 12. Fora de escopo (V0)
+
+- Chaves PMK/LMK ESP-NOW (Sprint 8 quando TX suportar)
 - Hardware real de GPS, IMU, compass (placeholders só)
 - Modos de degradação L3/L4 automáticos (só manuais via `MSG_COMMAND`)
 - Two-half-blit ou solda do pad TE (só se medição mostrar tearing severo)
@@ -428,7 +506,7 @@ Critérios originais do CLAUDE.md ajustados para realismo do pipeline:
 
 ---
 
-## 12. Riscos e mitigações
+## 13. Riscos e mitigações
 
 | Risco | Probabilidade | Impacto | Mitigação |
 |---|---|---|---|
@@ -441,7 +519,7 @@ Critérios originais do CLAUDE.md ajustados para realismo do pipeline:
 
 ---
 
-## 13. Itens explicitamente decididos
+## 14. Itens explicitamente decididos
 
 Os 8 pontos em aberto do CLAUDE.md + 2 emergentes, todos fechados:
 
