@@ -19,47 +19,9 @@
 #include <cstring>
 #include <cstdint>
 
-// ---------------------------------------------------------------------------
-// Host build: pull in pair_nvs_is_valid_mac_for_persist logic directly.
-// The host build cannot link against ESP-IDF NVS, so we compile a thin
-// in-memory shim for pair_nvs_{save,load,clear} and test the real
-// pair_nvs_is_valid_mac_for_persist implementation.
-//
-// pair_nvs.cpp must guard with PAIR_NVS_HOST_BUILD to skip nvs_* calls.
-// ---------------------------------------------------------------------------
-
-// Stub for peer_mac_is_placeholder (the real one lives in espnow_link.cpp
-// but that pulls in ESP-IDF headers).  The host test re-declares the same
-// logic here; pair_nvs.cpp must call the version from espnow_link in device
-// builds but may call this via a weak symbol or #ifdef in host builds.
-static bool peer_mac_is_placeholder_stub(const uint8_t mac[6]) {
-    static const uint8_t kPlaceholder[6] = {0xAA,0xBB,0xCC,0xDD,0xEE,0xFF};
-    static const uint8_t kBroadcast[6]   = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
-    static const uint8_t kZero[6]        = {0x00,0x00,0x00,0x00,0x00,0x00};
-    return memcmp(mac, kPlaceholder, 6) == 0 ||
-           memcmp(mac, kBroadcast,   6) == 0 ||
-           memcmp(mac, kZero,        6) == 0;
-}
-
-// In-memory NVS shim -------------------------------------------------------
-static bool  s_has_entry   = false;
-static uint8_t s_stored_mac[6] = {};
-
-// These are the symbols that pair_nvs.cpp must expose when built with
-// PAIR_NVS_HOST_BUILD=1.  In host mode, pair_nvs.cpp replaces nvs_* calls
-// with the stubs below (or the test binary links pair_nvs_host_stub.cpp).
-// For now we include a local re-implementation so the tests compile.
-// When pair_nvs.cpp is written, this block becomes the thing we test against.
-
-extern "C" {
-
-bool pair_nvs_is_valid_mac_for_persist(const uint8_t mac[6]);
-bool pair_nvs_init(void);
-bool pair_nvs_load_tx_mac(uint8_t out[6]);
-bool pair_nvs_save_tx_mac(const uint8_t mac[6]);
-void pair_nvs_clear(void);
-
-} // extern "C"
+// pair_nvs.cpp is compiled with PAIR_NVS_HOST_BUILD=1 (see Makefile) and
+// provides its own in-memory shim. We just include the public header.
+#include "pair_nvs.h"
 
 // ---------------------------------------------------------------------------
 // Assertion macros
