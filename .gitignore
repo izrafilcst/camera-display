@@ -10,3 +10,13 @@ sdkconfig.esp32s3-*
 # Swarm / agent scratch
 .claude-flow/
 .swarm/
+
+# Tool artifacts
+.vscode/
+.superpowers/
+graphify-out/
+ruvector.db
+.claude-flow/
+.swarm/
+.claude/
+CLAUDE.md
