@@ -150,7 +150,7 @@ extern "C" void app_main(void) {
     // Smoke test mode: display + render only. Skip ESP-NOW / decode / link UI.
     // -----------------------------------------------------------------------
     ESP_LOGW(TAG, "SMOKE TEST MODE — bypassing espnow/decode/link_ui");
-    if (!display_init(LCD_SPI_HZ_TARGET)) {
+    if (!display_init(LCD_SPI_HZ)) {
         ESP_LOGE(TAG, "display_init failed");
         return;
     }
@@ -243,7 +243,7 @@ extern "C" void app_main(void) {
     }
     espnow_link_add_peer(tx_mac);
 
-    if (!display_init(LCD_SPI_HZ_TARGET)) {
+    if (!display_init(LCD_SPI_HZ)) {
         ESP_LOGE(TAG, "display_init failed");
         return;
     }

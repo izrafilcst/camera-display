@@ -27,7 +27,11 @@ public:
             cfg.spi_host    = LCD_SPI_HOST;
             cfg.spi_mode    = 0;
             cfg.freq_write  = spi_hz;
-            cfg.freq_read   = 16000000;
+            // 6 MHz: o datasheet da trc min 150 ns para leitura (p.243 secao
+            // 18.3.4), ou seja 6,67 MHz de teto. Hoje readable == false e
+            // nada le, mas deixar 16 MHz aqui e uma armadilha armada para
+            // quem ligar leitura amanha.
+            cfg.freq_read   = 6000000;
             cfg.spi_3wire   = false;
             // bus_shared=false + use_lock=false: display owns SPI2 exclusively;
             // skip the per-transaction mutex (~5-10 us/frame saved).

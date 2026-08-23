@@ -21,6 +21,10 @@
 #define PIN_BTN_ADVANCE     2
 #define PIN_BTN_BACK        1
 
-// SPI clock targets
-#define LCD_SPI_HZ_TARGET   80000000   // 80 MHz — testar estabilidade no hw real
-#define LCD_SPI_HZ_SAFE     40000000   // 40 MHz — baseline garantido
+// SPI clock. 40 MHz e 4x acima dos 10 MHz que o datasheet ILI9341 V1.11
+// especifica (p.243 secao 18.3.4: twc min 100 ns). Desvio consciente: e o
+// valor que os modulos ILI9341 toleram na pratica, e a 40 MHz um frame cheio
+// ocupa 30,7 ms de fio (teto ~32 fps) contra a meta V0 de 24 fps.
+// LCD_SPI_HZ_SAFE foi removido: era codigo morto, nenhum call site o usava.
+// Ver docs/superpowers/specs/2026-08-22-ili9341-driver-conformance-design.md
+#define LCD_SPI_HZ          40000000
