@@ -10,10 +10,20 @@ extern "C" {
 // ---------------------------------------------------------------------------
 
 /**
- * Inicializa o barramento SPI, configura o ILI9341 e liga o backlight.
- * @param spi_hz  Frequencia SPI em Hz (tipico: 40000000 ou 80000000).
- * @return true se OK; false em falha (log ESP_LOGE com detalhe).
+ * Inicializa o barramento SPI, reseta o ILI9341 e liga o backlight.
+ *
+ * O reset e feito manualmente com a temporizacao do datasheet (p.230 s15.4:
+ * tRW >= 10 us, e Sleep Out so 120 ms apos soltar RESX) e o LovyanGFX e
+ * inicializado via init_without_reset() para nao pulsar o RST de novo com a
+ * temporizacao dele (64 ms, insuficiente).
+ *
+ * @param spi_hz  Frequencia SPI em Hz. Use LCD_SPI_HZ (40 MHz).
+ * @return true se OK; false em falha de alocacao.
+ * @note  NAO detecta painel ausente: com cfg.readable == false o LovyanGFX
+ *        nunca le o painel, entao o init sempre reporta sucesso.
  * @note  Nao e thread-safe. Chamar uma unica vez antes de criar tasks.
+ * @note  Reentrante: a segunda chamada e no-op e retorna true, avisando por
+ *        log se a frequencia pedida for diferente da que ja esta em uso.
  */
 bool display_init(uint32_t spi_hz);
 

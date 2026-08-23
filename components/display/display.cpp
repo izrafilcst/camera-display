@@ -4,16 +4,22 @@
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "driver/gpio.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <cassert>
 #include <cstdint>
 #include <cstddef>   // size_t — usado tambem pelo blit fatiado da Task 8
 
 static const char* TAG = "display";
 static LGFX_ILI9341_Red* s_lcd = nullptr;
+static uint32_t s_spi_hz = 0;
 
 bool display_init(uint32_t spi_hz) {
     if (s_lcd != nullptr) {
-        // Already initialized — safe to return true without re-init.
+        if (spi_hz != s_spi_hz) {
+            ESP_LOGW(TAG, "already initialised at %u Hz; ignoring request for %u Hz",
+                     (unsigned)s_spi_hz, (unsigned)spi_hz);
+        }
         return true;
     }
 
@@ -24,8 +30,33 @@ bool display_init(uint32_t spi_hz) {
     ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_set_level((gpio_num_t)PIN_SD_CS,    1));
     ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_set_level((gpio_num_t)PIN_TOUCH_CS, 1));
 
+    // Backlight hard off before the reset below. The manual reset runs before
+    // LovyanGFX's Light_PWM::init(0), so without this the BL pin would float
+    // through the reset pulse — exactly the flash we are removing.
+    // cfg.invert == false in lgfx_ili9341_config.h, so LOW = off.
+    ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_set_direction((gpio_num_t)PIN_LCD_BL, GPIO_MODE_OUTPUT));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_set_level((gpio_num_t)PIN_LCD_BL, 0));
+
+    // Hardware reset with the datasheet's timing (ILI9341 V1.11, p.230 s15.4):
+    //   tRW >= 10 us  -> 10 ms here, margin for a slow-rising rail
+    //   note 7: after releasing RESX wait 5 ms before any command, AND do not
+    //           send Sleep Out for 120 ms.
+    // LovyanGFX's own reset (Panel_Device::init) waits only 64 ms before the
+    // SLPOUT in its init list, so we do the reset ourselves with the right
+    // timing and then call init_without_reset(), which keeps everything else
+    // it does (init_cs, Light_PWM::init(0), bus init, rst high).
+    ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_set_direction((gpio_num_t)PIN_LCD_RST, GPIO_MODE_OUTPUT));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_set_level((gpio_num_t)PIN_LCD_RST, 0));
+    vTaskDelay(pdMS_TO_TICKS(10));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_set_level((gpio_num_t)PIN_LCD_RST, 1));
+    vTaskDelay(pdMS_TO_TICKS(120));
+
     s_lcd = new LGFX_ILI9341_Red(spi_hz);
-    if (!s_lcd->init()) {
+    // NOTE: with cfg.readable == false LovyanGFX never reads the panel back,
+    // so init_impl always returns true — this check cannot detect a missing or
+    // dead panel. Kept because it costs nothing and starts working the day we
+    // enable reads.
+    if (!s_lcd->init_without_reset(false)) {
         ESP_LOGE(TAG, "lcd init failed @ %u Hz", (unsigned)spi_hz);
         delete s_lcd;
         s_lcd = nullptr;
@@ -41,6 +72,7 @@ bool display_init(uint32_t spi_hz) {
     s_lcd->fillScreen(0x0000);   // black
     s_lcd->setBrightness(200);   // 0..255
 
+    s_spi_hz = spi_hz;
     ESP_LOGI(TAG, "lcd ok %dx%d @ %u Hz",
              s_lcd->width(), s_lcd->height(), (unsigned)spi_hz);
     return true;
