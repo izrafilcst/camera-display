@@ -12,8 +12,9 @@
  *    Evita overhead de mutex (~5-10 us/frame) desnecessario.
  *  - swap = true em writePixels: ESP32-S3 e little-endian, ILI9341 espera
  *    big-endian (byte alto primeiro). Sem swap = cores embaralhadas.
- *  - rgb_order = false: ILI9341 aceita BGR (ordem nativa do chip).
- *    Se cores aparecerem complementares (vermelho vira azul), trocar para true.
+ *  - rgb_order = false: escreve MAD_BGR no MADCTL. Nao e o default do chip
+ *    (que e RGB, 8'h00) — e o que o modulo vermelho pede. Ver comentario
+ *    detalhado no cfg.rgb_order abaixo.
  */
 class LGFX_ILI9341_Red : public lgfx::LGFX_Device {
     lgfx::Panel_ILI9341 _panel;
@@ -63,7 +64,14 @@ public:
             //   Se tela apagar -> invert=false esta correto.
             //   Se tela acender ao maximo -> trocar para invert=true.
             cfg.invert           = false;
-            cfg.rgb_order        = false;  // BGR — nativo do ILI9341
+            // rgb_order=false faz o LovyanGFX escrever MAD_BGR (0x08) no
+            // MADCTL. ATENCAO: BGR nao e o default do chip — o datasheet
+            // p.127-128 mostra MADCTL = 8'h00 apos Power On E apos HW Reset,
+            // ou seja bit BGR = 0 = painel com filtro RGB. Setamos BGR porque
+            // e o que os modulos vermelhos 2.8" pedem, nao porque o chip
+            // prefira. Se as cores sairem trocadas (vermelho vira azul),
+            // inverter para true.
+            cfg.rgb_order        = false;
             cfg.dlen_16bit       = false;
             cfg.bus_shared       = false;  // SD/touch nao usados; sem mutex overhead
             _panel.config(cfg);

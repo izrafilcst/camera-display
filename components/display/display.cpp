@@ -33,8 +33,13 @@ bool display_init(uint32_t spi_hz) {
     }
 
     s_lcd->setRotation(1);       // landscape 320x240
-    s_lcd->setBrightness(200);   // 0..255
+
+    // fillScreen BEFORE setBrightness: after power-on the panel GRAM holds
+    // random data (datasheet p.114, RAMWR "Default" table: "Contents of
+    // memory is set randomly"). Lighting the backlight first shows that
+    // garbage for one frame.
     s_lcd->fillScreen(0x0000);   // black
+    s_lcd->setBrightness(200);   // 0..255
 
     // The blit window never changes for the full-frame pipeline, so set it
     // once here and let display_blit_full skip the per-frame CASET/RASET
