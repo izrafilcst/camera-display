@@ -41,13 +41,6 @@ bool display_init(uint32_t spi_hz) {
     s_lcd->fillScreen(0x0000);   // black
     s_lcd->setBrightness(200);   // 0..255
 
-    // The blit window never changes for the full-frame pipeline, so set it
-    // once here and let display_blit_full skip the per-frame CASET/RASET
-    // (~5 us/frame at 80 MHz SPI).
-    s_lcd->startWrite();
-    s_lcd->setAddrWindow(0, 0, s_lcd->width(), s_lcd->height());
-    s_lcd->endWrite();
-
     ESP_LOGI(TAG, "lcd ok %dx%d @ %u Hz",
              s_lcd->width(), s_lcd->height(), (unsigned)spi_hz);
     return true;
@@ -58,10 +51,15 @@ int display_height(void) { return s_lcd ? s_lcd->height() : 240; }
 
 void display_blit_full(const uint16_t* buf) {
     if (!s_lcd || !buf) return;
-    // setAddrWindow is pinned at display_init() to the full 320x240 frame,
-    // so we just stream pixels here. swap=true converts little-endian
-    // RGB565 to the big-endian byte order the ILI9341 expects.
+    // The address window is set per frame. It costs ~5 us against a 30,7 ms
+    // frame at 40 MHz (0,016%) and buys back a global invariant that used to
+    // span display.cpp and render.cpp: any LovyanGFX call emitting CASET or
+    // RASET would silently corrupt the next blit.
+    // swap=true converts little-endian RGB565 to the big-endian byte order
+    // the ILI9341 expects. (Task 8 removes this by moving the framebuffer to
+    // big-endian end to end.)
     s_lcd->startWrite();
+    s_lcd->setAddrWindow(0, 0, s_lcd->width(), s_lcd->height());
     s_lcd->writePixels(buf, s_lcd->width() * s_lcd->height(), true);
     s_lcd->endWrite();
 }

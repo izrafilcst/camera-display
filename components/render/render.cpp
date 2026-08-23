@@ -92,17 +92,6 @@ void render_capture_thumb(void) {
     xSemaphoreGive(s_mutex);
 }
 
-// After any overlay draws via fillRect/fillScreen/pushImage the ILI9341
-// controller holds whatever sub-window the LovyanGFX call ended with
-// (CASET/RASET were emitted internally). Sprint 1 nit F6 pinned the
-// blit window to 320x240 once at display_init and dropped the per-blit
-// setAddrWindow from display_blit_full — so if we don't restore the
-// full window here, the next video frame streams 320*240 pixels into
-// whatever tiny rect the overlay left behind and wraps catastrophically.
-static inline void restore_full_blit_window(lgfx::LGFX_Device* lcd) {
-    lcd->setAddrWindow(0, 0, 320, 240);
-}
-
 void render_show_freeze(void) {
     auto* lcd = get_lcd();
     if (!lcd) return;
@@ -120,7 +109,6 @@ void render_show_freeze(void) {
         lcd->setTextSize(1);
         lcd->setCursor(254, 8);
         lcd->print("FREEZE");
-        restore_full_blit_window(lcd);
         lcd->endWrite();
     } else if (s_has_presented) {
         // Erase the badge by streaming the underlying front-buffer slice.
@@ -131,7 +119,6 @@ void render_show_freeze(void) {
         for (int y = 4; y < 20; ++y) {
             lcd->writePixels(&fb[y * 320 + 248], 64, true);
         }
-        restore_full_blit_window(lcd);
         lcd->endWrite();
     }
     xSemaphoreGive(s_mutex);
@@ -156,7 +143,6 @@ void render_show_disconnected(uint32_t since_ms) {
         lcd->setCursor(120, 205);
         lcd->print("ultimo frame");
     }
-    restore_full_blit_window(lcd);
     lcd->endWrite();
     xSemaphoreGive(s_mutex);
 }
