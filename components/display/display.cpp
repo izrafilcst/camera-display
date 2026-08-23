@@ -4,6 +4,9 @@
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "driver/gpio.h"
+#include <cassert>
+#include <cstdint>
+#include <cstddef>   // size_t — usado tambem pelo blit fatiado da Task 8
 
 static const char* TAG = "display";
 static LGFX_ILI9341_Red* s_lcd = nullptr;
@@ -65,15 +68,18 @@ void display_wait_dma(void) {
 
 uint16_t* display_alloc_framebuffer_psram(void) {
     const size_t bytes = 320u * 240u * sizeof(uint16_t);
-    // Try DMA-capable PSRAM first (preferred path on ESP32-S3).
-    void* p = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+    // MALLOC_CAP_DMA is deliberately NOT requested. On the ESP32-S3 the PSRAM
+    // heap is registered as SPIRAM|DEFAULT|8BIT|32BIT and never carries the
+    // DMA cap (esp_psram.c, esp_psram_extram_add_to_heap_allocator), so
+    // SPIRAM|DMA can only ever return nullptr — the old primary path was dead
+    // code and its warning fired on every boot, twice. GDMA reaches PSRAM
+    // through the cache on the S3 regardless of the flag.
+    void* p = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
     if (!p) {
-        // Fallback: PSRAM without explicit DMA flag.
-        // LovyanGFX on S3+IDF5.2 can DMA from PSRAM regardless of this flag,
-        // but log a warning for visibility.
-        ESP_LOGW(TAG, "psram DMA alloc failed, retrying without DMA cap");
-        p = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+        ESP_LOGE(TAG, "psram framebuffer alloc failed (%u bytes)", (unsigned)bytes);
+        return nullptr;
     }
+    assert(((uintptr_t)p % 4) == 0);   // GDMA requires 4-byte alignment
     return static_cast<uint16_t*>(p);
 }
 
