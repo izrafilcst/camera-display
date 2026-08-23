@@ -45,11 +45,12 @@ int64_t decoder_decode_to_rgb565(const uint8_t* jpeg, size_t jpeg_len,
     cfg.outbuf_size  = static_cast<uint32_t>(expected_w * expected_h * 2);  // RGB565
     cfg.out_format   = JPEG_IMAGE_FORMAT_RGB565;
     cfg.out_scale    = JPEG_IMAGE_SCALE_0;
-    // swap_color_bytes=0: leave RGB565 in native (little-endian) order in
-    // PSRAM. display_blit_full / writePixels(swap=true) then swaps each
-    // 16-bit pixel on its way to the ILI9341, which expects big-endian.
-    // (Sprint 2 review F-03 keeps an eye on this — verify empirically.)
-    cfg.flags.swap_color_bytes = 0;
+    // swap_color_bytes=1: esp_jpeg writes RGB565 already byte-swapped, i.e.
+    // big-endian, which is what the ILI9341 reads off the wire. The swap
+    // happens inside the decode loop at no measurable cost, and it lets
+    // display_blit_full take LovyanGFX's no_convert path — a straight DMA out
+    // of PSRAM instead of a CPU pass over 76800 pixels per frame.
+    cfg.flags.swap_color_bytes = 1;
 
     esp_jpeg_image_output_t img = {};
     esp_err_t r = esp_jpeg_decode(&cfg, &img);

@@ -5,16 +5,18 @@ static const int W = 320;
 static const int H = 240;
 
 /**
- * Pack 8-bit R/G/B channels into RGB565 (big-endian word, ILI9341 native order).
+ * Pack 8-bit R/G/B into RGB565 and return it byte-swapped, so the uint16_t
+ * sits in memory as big-endian — the order the ILI9341 reads off the wire.
+ * Logical field layout before the swap: bits[15..11]=R5, [10..5]=G6, [4..0]=B5.
  * Non-static so the host test TU can link against it directly.
- * Formula: bits[15..11]=R5, bits[10..5]=G6, bits[4..0]=B5.
  */
-uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
-    return static_cast<uint16_t>(
+rgb565be_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
+    const uint16_t logical = static_cast<uint16_t>(
         ((r & 0xF8u) << 8) |
         ((g & 0xFCu) << 3) |
         (b >> 3)
     );
+    return static_cast<rgb565be_t>((logical >> 8) | (logical << 8));
 }
 
 /**
@@ -22,8 +24,8 @@ uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
  * White | Yellow | Cyan | Green | Magenta | Red | Blue | Black
  * Each bar is W/8 = 40 pixels wide.
  */
-void pattern_color_bars(uint16_t* buf) {
-    const uint16_t colors[8] = {
+void pattern_color_bars(rgb565be_t* buf) {
+    const rgb565be_t colors[8] = {
         rgb565(255, 255, 255),  // 0: white
         rgb565(255, 255,   0),  // 1: yellow
         rgb565(  0, 255, 255),  // 2: cyan
@@ -50,7 +52,7 @@ void pattern_color_bars(uint16_t* buf) {
  *   B = 255 - R                (decreases left-to-right)
  * Corner colours: TL=blue, TR=yellow, BL=magenta, BR=green.
  */
-void pattern_gradient(uint16_t* buf) {
+void pattern_gradient(rgb565be_t* buf) {
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
             uint8_t r = static_cast<uint8_t>((x * 255) / (W - 1));
@@ -66,10 +68,10 @@ void pattern_gradient(uint16_t* buf) {
  * Cell (cx, cy) is white when (cx+cy) is even, black when odd.
  * cell_px is clamped to >= 1 to prevent divide-by-zero.
  */
-void pattern_checker(uint16_t* buf, int cell_px) {
+void pattern_checker(rgb565be_t* buf, int cell_px) {
     if (cell_px < 1) cell_px = 1;
-    const uint16_t white = rgb565(255, 255, 255);
-    const uint16_t black = rgb565(  0,   0,   0);
+    const rgb565be_t white = rgb565(255, 255, 255);
+    const rgb565be_t black = rgb565(  0,   0,   0);
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
             const bool on = (((x / cell_px) + (y / cell_px)) & 1) != 0;
@@ -83,13 +85,13 @@ void pattern_checker(uint16_t* buf, int cell_px) {
  * Alternating 16-pixel white/black horizontal bands shift 8 px per frame.
  * At 24 fps this produces 0.33 s per full cycle — visible tearing if any.
  */
-void pattern_tearing_stripes(uint16_t* buf, uint32_t frame_counter) {
+void pattern_tearing_stripes(rgb565be_t* buf, uint32_t frame_counter) {
     const int shift = static_cast<int>((frame_counter * 8u) % static_cast<uint32_t>(H));
-    const uint16_t white = rgb565(255, 255, 255);
-    const uint16_t black = rgb565(  0,   0,   0);
+    const rgb565be_t white = rgb565(255, 255, 255);
+    const rgb565be_t black = rgb565(  0,   0,   0);
     for (int y = 0; y < H; ++y) {
         const bool on = (((y + shift) / 16) & 1) != 0;
-        const uint16_t c = on ? white : black;
+        const rgb565be_t c = on ? white : black;
         for (int x = 0; x < W; ++x) {
             buf[y * W + x] = c;
         }

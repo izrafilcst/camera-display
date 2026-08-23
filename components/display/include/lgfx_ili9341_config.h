@@ -10,10 +10,12 @@
  * NOTAS DE HARDWARE:
  *  - bus_shared = false: SD e touch nao sao usados via LovyanGFX.
  *    Evita overhead de mutex (~5-10 us/frame) desnecessario.
- *  - swap = true em writePixels: ESP32-S3 e little-endian, ILI9341 espera
- *    big-endian (byte alto primeiro). Sem swap = cores embaralhadas.
- *  - rgb_order = false: ILI9341 aceita BGR (ordem nativa do chip).
- *    Se cores aparecerem complementares (vermelho vira azul), trocar para true.
+ *  - swap = false em writePixels/writePixelsDMA: o framebuffer ja vive em
+ *    big-endian (rgb565be_t), a ordem que o ILI9341 espera. Nao ha conversao
+ *    de CPU no caminho do blit — ver display_blit_full.
+ *  - rgb_order = false: escreve MAD_BGR no MADCTL. Nao e o default do chip
+ *    (que e RGB, 8'h00) — e o que o modulo vermelho pede. Ver comentario
+ *    detalhado no cfg.rgb_order abaixo.
  */
 class LGFX_ILI9341_Red : public lgfx::LGFX_Device {
     lgfx::Panel_ILI9341 _panel;
@@ -27,7 +29,11 @@ public:
             cfg.spi_host    = LCD_SPI_HOST;
             cfg.spi_mode    = 0;
             cfg.freq_write  = spi_hz;
-            cfg.freq_read   = 16000000;
+            // 6 MHz: o datasheet da trc min 150 ns para leitura (p.243 secao
+            // 18.3.4), ou seja 6,67 MHz de teto. Hoje readable == false e
+            // nada le, mas deixar 16 MHz aqui e uma armadilha armada para
+            // quem ligar leitura amanha.
+            cfg.freq_read   = 6000000;
             cfg.spi_3wire   = false;
             // bus_shared=false + use_lock=false: display owns SPI2 exclusively;
             // skip the per-transaction mutex (~5-10 us/frame saved).
@@ -59,7 +65,14 @@ public:
             //   Se tela apagar -> invert=false esta correto.
             //   Se tela acender ao maximo -> trocar para invert=true.
             cfg.invert           = false;
-            cfg.rgb_order        = false;  // BGR — nativo do ILI9341
+            // rgb_order=false faz o LovyanGFX escrever MAD_BGR (0x08) no
+            // MADCTL. ATENCAO: BGR nao e o default do chip — o datasheet
+            // p.127-128 mostra MADCTL = 8'h00 apos Power On E apos HW Reset,
+            // ou seja bit BGR = 0 = painel com filtro RGB. Setamos BGR porque
+            // e o que os modulos vermelhos 2.8" pedem, nao porque o chip
+            // prefira. Se as cores sairem trocadas (vermelho vira azul),
+            // inverter para true.
+            cfg.rgb_order        = false;
             cfg.dlen_16bit       = false;
             cfg.bus_shared       = false;  // SD/touch nao usados; sem mutex overhead
             _panel.config(cfg);

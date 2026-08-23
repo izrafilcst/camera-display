@@ -177,7 +177,8 @@ bool reassembly_push_frag(const uint8_t* payload, size_t len,
 
     // Wire-contract cap on payload_len: frag 0 carries at most 236 bytes,
     // other fragments at most 240. Anything larger is a malformed packet
-    // (uint8_t allows up to 255 but TX never emits more than the cap).
+    // (the uint16_t field allows up to 65535 but TX never emits more than
+    // the cap, so this check is load-bearing against hostile input).
     const size_t per_frag_cap = (h.frag_idx == 0) ? FRAG_DATA_MAX_0 : FRAG_DATA_MAX_N;
     if (h.payload_len > per_frag_cap) {
         s_stats.fragments_invalid++;

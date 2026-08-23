@@ -26,10 +26,10 @@
 // Test-pattern helpers live in components/display/test_patterns.cpp. They're
 // not part of the public display.h API (Sprint 1 review F3), so forward-declare
 // here only inside the smoke-test build.
-extern void pattern_color_bars(uint16_t* buf);
-extern void pattern_gradient(uint16_t* buf);
-extern void pattern_checker(uint16_t* buf, int cell_px);
-extern void pattern_tearing_stripes(uint16_t* buf, uint32_t frame_counter);
+extern void pattern_color_bars(rgb565be_t* buf);
+extern void pattern_gradient(rgb565be_t* buf);
+extern void pattern_checker(rgb565be_t* buf, int cell_px);
+extern void pattern_tearing_stripes(rgb565be_t* buf, uint32_t frame_counter);
 #endif
 
 static const char* TAG = "main";
@@ -150,7 +150,7 @@ extern "C" void app_main(void) {
     // Smoke test mode: display + render only. Skip ESP-NOW / decode / link UI.
     // -----------------------------------------------------------------------
     ESP_LOGW(TAG, "SMOKE TEST MODE — bypassing espnow/decode/link_ui");
-    if (!display_init(LCD_SPI_HZ_TARGET)) {
+    if (!display_init(LCD_SPI_HZ)) {
         ESP_LOGE(TAG, "display_init failed");
         return;
     }
@@ -243,7 +243,7 @@ extern "C" void app_main(void) {
     }
     espnow_link_add_peer(tx_mac);
 
-    if (!display_init(LCD_SPI_HZ_TARGET)) {
+    if (!display_init(LCD_SPI_HZ)) {
         ESP_LOGE(TAG, "display_init failed");
         return;
     }

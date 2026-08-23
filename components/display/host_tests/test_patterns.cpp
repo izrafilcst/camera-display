@@ -81,6 +81,15 @@ static inline uint16_t pixel(const uint16_t* buf, int x, int y) {
     return buf[y * W + x];
 }
 
+// The framebuffer contract is big-endian RGB565 (see rgb565be_t in
+// display.h): the uint16_t sits in memory as {R5G3, G3B5} — the order the
+// ILI9341 reads off the wire. Expectations below are therefore byte-swapped
+// relative to the familiar 0xF800-style constants. le_of() undoes the swap so
+// the bit-field assertions stay readable.
+static inline uint16_t le_of(uint16_t be) {
+    return (uint16_t)((be >> 8) | (be << 8));
+}
+
 // ---------------------------------------------------------------------------
 // Shared buffer (static, avoids VLA / stack overflow risk for 153.6 KB)
 // ---------------------------------------------------------------------------
@@ -97,24 +106,24 @@ static int g_passed = 0;
 // ===========================================================================
 
 static void test_rgb565_red_pure() {
-    // should encode red pure (255,0,0) as 0xF800
+    // should encode red pure (255,0,0) as 0x00F8 (0xF800 byte-swapped)
     uint16_t got = rgb565(255, 0, 0);
-    ASSERT_EQ_U16(got, 0xF800, "rgb565 red pure");
-    TEST_PASS("should encode red pure (255,0,0) as 0xF800");
+    ASSERT_EQ_U16(got, 0x00F8, "rgb565 red pure BE");
+    TEST_PASS("should encode red pure (255,0,0) as 0x00F8 big-endian");
 }
 
 static void test_rgb565_green_pure() {
-    // should encode green pure (0,255,0) as 0x07E0
+    // should encode green pure (0,255,0) as 0xE007 (0x07E0 byte-swapped)
     uint16_t got = rgb565(0, 255, 0);
-    ASSERT_EQ_U16(got, 0x07E0, "rgb565 green pure");
-    TEST_PASS("should encode green pure (0,255,0) as 0x07E0");
+    ASSERT_EQ_U16(got, 0xE007, "rgb565 green pure BE");
+    TEST_PASS("should encode green pure (0,255,0) as 0xE007 big-endian");
 }
 
 static void test_rgb565_blue_pure() {
-    // should encode blue pure (0,0,255) as 0x001F
+    // should encode blue pure (0,0,255) as 0x1F00 (0x001F byte-swapped)
     uint16_t got = rgb565(0, 0, 255);
-    ASSERT_EQ_U16(got, 0x001F, "rgb565 blue pure");
-    TEST_PASS("should encode blue pure (0,0,255) as 0x001F");
+    ASSERT_EQ_U16(got, 0x1F00, "rgb565 blue pure BE");
+    TEST_PASS("should encode blue pure (0,0,255) as 0x1F00 big-endian");
 }
 
 static void test_rgb565_white() {
@@ -132,13 +141,24 @@ static void test_rgb565_black() {
 }
 
 static void test_rgb565_mid_gray() {
-    // should place R channel in bits 15..11 for gray (128,128,128)
+    // should place R in bits 15..11 of the logical value for gray (128,128,128)
     uint16_t got = rgb565(128, 128, 128);
-    // R5 = 128>>3 = 16, G6 = 128>>2 = 32, B5 = 128>>3 = 16
-    // expected = (16<<11)|(32<<5)|16 = 0x8410
-    uint16_t expected = (uint16_t)(((128 & 0xF8) << 8) | ((128 & 0xFC) << 3) | (128 >> 3));
-    ASSERT_EQ_U16(got, expected, "rgb565 mid gray exact");
-    TEST_PASS("should encode gray (128,128,128) with R in bits 15..11, G in 10..5, B in 4..0");
+    // logical = (16<<11)|(32<<5)|16 = 0x8410 ; stored big-endian = 0x1084
+    uint16_t logical  = (uint16_t)(((128 & 0xF8) << 8) | ((128 & 0xFC) << 3) | (128 >> 3));
+    uint16_t expected = (uint16_t)((logical >> 8) | (logical << 8));
+    ASSERT_EQ_U16(got, expected, "rgb565 mid gray exact BE");
+    TEST_PASS("should encode gray (128,128,128) with R in bits 15..11 of the logical value");
+}
+
+static void test_rgb565_is_big_endian_in_memory() {
+    // should lay red out as {0xF8, 0x00} in memory, R-high byte first.
+    // Assumes a little-endian host (x86-64 / arm64 Linux — every supported
+    // dev machine). On a big-endian host this assertion would be inverted.
+    uint16_t v = rgb565(255, 0, 0);
+    const uint8_t* b = reinterpret_cast<const uint8_t*>(&v);
+    ASSERT_EQ_INT(b[0], 0xF8, "first memory byte is R-high");
+    ASSERT_EQ_INT(b[1], 0x00, "second memory byte is G-low|B");
+    TEST_PASS("should store red as bytes {0xF8,0x00} so the ILI9341 sees big-endian");
 }
 
 // ===========================================================================
@@ -153,10 +173,10 @@ static void test_color_bars_pixel_0_0_white() {
 }
 
 static void test_color_bars_pixel_40_0_yellow() {
-    // should set pixel(40,0) to yellow 0xFFE0 (bar 1)
+    // yellow 0xFFE0 stored big-endian is 0xE0FF
     pattern_color_bars(g_buf);
-    ASSERT_EQ_U16(pixel(g_buf, 40, 0), 0xFFE0, "color_bars pixel(40,0) yellow");
-    TEST_PASS("should set pixel(40,0) to yellow (0xFFE0) when pattern_color_bars fills bar 1");
+    ASSERT_EQ_U16(pixel(g_buf, 40, 0), 0xE0FF, "color_bars pixel(40,0) yellow BE");
+    TEST_PASS("should set pixel(40,0) to yellow (0xE0FF big-endian) in bar 1");
 }
 
 static void test_color_bars_pixel_280_100_black() {
@@ -187,17 +207,17 @@ static void test_color_bars_adjacent_bars_differ() {
 // ===========================================================================
 
 static void test_gradient_pixel_0_0_blue() {
-    // should set pixel(0,0) to blue 0x001F: R=0,G=0,B=255
+    // blue 0x001F stored big-endian is 0x1F00
     pattern_gradient(g_buf);
-    ASSERT_EQ_U16(pixel(g_buf, 0, 0), 0x001F, "gradient pixel(0,0) blue");
-    TEST_PASS("should set pixel(0,0) to 0x001F (R=0,G=0,B=255) when gradient starts at origin");
+    ASSERT_EQ_U16(pixel(g_buf, 0, 0), 0x1F00, "gradient pixel(0,0) blue BE");
+    TEST_PASS("should set pixel(0,0) to 0x1F00 (R=0,G=0,B=255) big-endian");
 }
 
 static void test_gradient_pixel_319_239_yellow() {
-    // should set pixel(319,239) to 0xFFE0: R=255,G=255,B=0
+    // yellow 0xFFE0 stored big-endian is 0xE0FF
     pattern_gradient(g_buf);
-    ASSERT_EQ_U16(pixel(g_buf, 319, 239), 0xFFE0, "gradient pixel(319,239) yellow");
-    TEST_PASS("should set pixel(319,239) to 0xFFE0 (R=255,G=255,B=0) when gradient ends at far corner");
+    ASSERT_EQ_U16(pixel(g_buf, 319, 239), 0xE0FF, "gradient pixel(319,239) yellow BE");
+    TEST_PASS("should set pixel(319,239) to 0xE0FF (R=255,G=255,B=0) big-endian");
 }
 
 static void test_gradient_mid_x_r_channel_near_127() {
@@ -206,15 +226,15 @@ static void test_gradient_mid_x_r_channel_near_127() {
     // tolerance: ±1 in the 5-bit field
     pattern_gradient(g_buf);
     uint16_t p = pixel(g_buf, 160, 0);
-    ASSERT_CHANNEL_NEAR(p, 11, 0x1F, 15, 1, "gradient mid x R5 near 15");
-    TEST_PASS("should set R5 field of pixel(160,0) near 15 with tolerance ±1 when x=160");
+    ASSERT_CHANNEL_NEAR(le_of(p), 11, 0x1F, 15, 1, "gradient mid x R5 near 15");
+    TEST_PASS("should set R5 field of pixel(160,0) near 15 with tolerance +/-1 when x=160");
 }
 
 static void test_gradient_mid_x_g_channel_zero_at_y0() {
     // should set G channel of pixel(160,0) to 0 when y=0
     pattern_gradient(g_buf);
     uint16_t p = pixel(g_buf, 160, 0);
-    ASSERT_CHANNEL_NEAR(p, 5, 0x3F, 0, 0, "gradient y=0 G6 is 0");
+    ASSERT_CHANNEL_NEAR(le_of(p), 5, 0x3F, 0, 0, "gradient y=0 G6 is 0");
     TEST_PASS("should set G6 field of pixel(160,0) to 0 when y=0");
 }
 
@@ -222,7 +242,7 @@ static void test_gradient_r_channel_max_at_x319() {
     // should set R5 field to 31 (R=255) at x=319
     pattern_gradient(g_buf);
     uint16_t p = pixel(g_buf, 319, 0);
-    ASSERT_CHANNEL_NEAR(p, 11, 0x1F, 31, 0, "gradient R5=31 at x=319");
+    ASSERT_CHANNEL_NEAR(le_of(p), 11, 0x1F, 31, 0, "gradient R5=31 at x=319");
     TEST_PASS("should set R5 to 31 (no overflow) at x=319");
 }
 
@@ -289,6 +309,7 @@ int main() {
     test_rgb565_white();
     test_rgb565_black();
     test_rgb565_mid_gray();
+    test_rgb565_is_big_endian_in_memory();
 
     fprintf(stdout, "\n=== pattern_color_bars ===\n");
     test_color_bars_pixel_0_0_white();

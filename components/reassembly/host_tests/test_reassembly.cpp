@@ -62,7 +62,7 @@ static std::vector<uint8_t> make_frag(
         uint8_t  frag_idx,
         uint8_t  frag_total,
         uint16_t jpeg_size,
-        uint8_t  payload_len,    // uint8_t per TX wire spec (was uint16_t)
+        uint16_t payload_len,    // uint16_t — matches TX frag_codec write_u16_le()
         uint8_t  fill,
         uint32_t tx_ms = 0)
 {
@@ -416,6 +416,91 @@ static void test_req4_telemetry_seq_is_u32() {
 }
 
 // ===========================================================================
+// TX WIRE CONTRACT — golden vectors
+//
+// Every other test in this file builds packets through video_frag_hdr_t, so it
+// can only prove the parser is self-consistent. That is exactly how the 1-byte
+// payload_len skew survived: TX and RX were each internally consistent and both
+// suites were green, while the wire layouts disagreed.
+//
+// These vectors are laid out BYTE BY BYTE from the transmitter source of truth,
+// camera-drone/components/frag_codec/src/frag_codec.c, and deliberately do NOT
+// use the RX structs. If either side changes its layout, this test fails.
+//
+// TX reference (frag_codec_build), offsets relative to the ESP-NOW packet:
+//   [0]      MSG_VIDEO_FRAG (0x10)
+//   [1]      seq
+//   [2..3]   frame_id       u16 LE
+//   [4]      frag_idx
+//   [5]      frag_total
+//   [6..7]   jpeg_size      u16 LE
+//   [8..9]   payload_len    u16 LE   <-- 2 bytes, write_u16_le()
+//   [10..13] tx_emission_ms u32 LE   (frag 0 only)
+//   [10] or [14]: jpeg_data
+// reassembly_push_frag() receives the packet with the 2-byte esnow_hdr_t
+// already stripped by espnow_link, so these vectors start at TX offset 2.
+// ===========================================================================
+static void test_tx_wire_contract_golden_vectors() {
+    reassembly_init(2);
+
+    constexpr uint16_t FRAME_ID = 0x1234;
+    constexpr uint16_t JPEG_SZ  = 300;          // 236 in frag 0 + 64 in frag 1
+    constexpr uint32_t TX_MS    = 0xDEADBEEFu;
+
+    // ---- fragment 0: 8-byte header + 4-byte extra + 236 payload bytes ----
+    std::vector<uint8_t> f0 = {
+        0x34, 0x12,              // frame_id   = 0x1234
+        0x00,                    // frag_idx   = 0
+        0x02,                    // frag_total = 2
+        0x2C, 0x01,              // jpeg_size  = 300
+        0xEC, 0x00,              // payload_len= 236  (u16 LE — the whole point)
+        0xEF, 0xBE, 0xAD, 0xDE,  // tx_emission_ms = 0xDEADBEEF
+    };
+    ASSERT_EQ(f0.size(), 12u, "golden frag0 header must be 8 + 4 bytes");
+    for (int i = 0; i < 236; i++) f0.push_back(static_cast<uint8_t>(0xA0 + (i & 0x0F)));
+    // A real frag 0 fills the MTU exactly: 2 (esnow) + 8 + 4 + 236 = 250.
+    ASSERT_EQ(f0.size() + sizeof(esnow_hdr_t), ESPNOW_MTU,
+              "golden frag0 must fill the 250-byte ESP-NOW MTU exactly");
+
+    // ---- fragment 1: 8-byte header + 64 payload bytes (runt, last frag) ----
+    std::vector<uint8_t> f1 = {
+        0x34, 0x12,              // frame_id
+        0x01,                    // frag_idx   = 1
+        0x02,                    // frag_total = 2
+        0x2C, 0x01,              // jpeg_size  = 300
+        0x40, 0x00,              // payload_len= 64
+    };
+    ASSERT_EQ(f1.size(), 8u, "golden fragN header must be 8 bytes");
+    for (int i = 0; i < 64; i++) f1.push_back(static_cast<uint8_t>(0x50 + (i & 0x0F)));
+
+    reassembled_frame_t out{};
+    ASSERT_FALSE(reassembly_push_frag(f0.data(), f0.size(), 1000, &out),
+                 "tx-contract: frag 0 alone must not complete a 2-frag frame");
+    ASSERT_TRUE(reassembly_push_frag(f1.data(), f1.size(), 1001, &out),
+                "tx-contract: frag 1 must complete the frame");
+
+    ASSERT_EQ(out.frame_id, FRAME_ID, "tx-contract: frame_id mismatch");
+    ASSERT_EQ(out.jpeg_size, JPEG_SZ, "tx-contract: jpeg_size mismatch");
+    // A 1-byte header skew reads this as 0xADBEEF00 instead — 256x too large.
+    ASSERT_EQ(out.tx_emission_ms, TX_MS,
+              "tx-contract: tx_emission_ms mismatch (header size skew?)");
+
+    // Byte-exact payload. Under the old 7-byte header every fragment gained a
+    // leading 0x00 and lost its final byte, so this loop fails on byte 0.
+    for (int i = 0; i < 236; i++) {
+        ASSERT_EQ(out.jpeg_data[i], static_cast<uint8_t>(0xA0 + (i & 0x0F)),
+                  "tx-contract: frag 0 payload byte mismatch");
+    }
+    for (int i = 0; i < 64; i++) {
+        ASSERT_EQ(out.jpeg_data[236 + i], static_cast<uint8_t>(0x50 + (i & 0x0F)),
+                  "tx-contract: frag 1 payload byte mismatch");
+    }
+
+    reassembly_release(&out);
+    PASS("TX wire contract: golden vectors parse byte-exact (8-byte video header)");
+}
+
+// ===========================================================================
 // main
 // ===========================================================================
 
@@ -435,6 +520,9 @@ int main() {
     fprintf(stdout, "\n=== REQ-3: jpeg_size boundary ===\n");
     test_req3_jpeg_size_at_max_accepted();
     test_req3_jpeg_size_warn_band_accepted();
+
+    fprintf(stdout, "\n=== TX wire contract (golden vectors) ===\n");
+    test_tx_wire_contract_golden_vectors();
 
     fprintf(stdout, "\n=== Happy path ===\n");
     test_happy_single_fragment();
