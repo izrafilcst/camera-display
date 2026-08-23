@@ -12,11 +12,16 @@
 bool decoder_init(void);
 
 /**
- * Decode a JPEG buffer to RGB565 in out_buf.
+ * Decode a JPEG buffer to big-endian RGB565 in out_buf.
  * Validates SOI marker (0xFF 0xD8) before invoking esp_jpeg.
  * @param jpeg        JPEG data buffer.
  * @param jpeg_len    Byte count of JPEG data.
- * @param out_buf     Output RGB565 buffer; must be width*height*2 bytes, 4-byte aligned.
+ * @param out_buf     Output buffer; width*height*2 bytes, 4-byte aligned.
+ *                    Pixels are written BIG-ENDIAN (the byte order the
+ *                    ILI9341 expects) — see rgb565be_t in display.h. The
+ *                    parameter stays uint16_t* on purpose: this component
+ *                    does not depend on `display` and the typedef would add
+ *                    coupling without adding type safety.
  * @param expected_w  Expected image width in pixels.
  * @param expected_h  Expected image height in pixels.
  * @return Decode duration in microseconds, or -1 on error.
