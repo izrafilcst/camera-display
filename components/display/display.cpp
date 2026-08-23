@@ -81,19 +81,47 @@ bool display_init(uint32_t spi_hz) {
 int display_width(void)  { return s_lcd ? s_lcd->width()  : 320; }
 int display_height(void) { return s_lcd ? s_lcd->height() : 240; }
 
-void display_blit_full(const uint16_t* buf) {
+// 48 * 320 * 2 = 30720 bytes — abaixo do teto de ~32 KB de uma transacao de
+// hardware do SPI. 240 / 48 = 5 fatias exatas.
+static constexpr int kBlitSliceRows = 48;
+
+void display_blit_full(const rgb565be_t* buf) {
     if (!s_lcd || !buf) return;
+    const int w = s_lcd->width();
+    const int h = s_lcd->height();
+
     // The address window is set per frame. It costs ~5 us against a 30,7 ms
     // frame at 40 MHz (0,016%) and buys back a global invariant that used to
     // span display.cpp and render.cpp: any LovyanGFX call emitting CASET or
     // RASET would silently corrupt the next blit.
-    // swap=true converts little-endian RGB565 to the big-endian byte order
-    // the ILI9341 expects. (Task 8 removes this by moving the framebuffer to
-    // big-endian end to end.)
     s_lcd->startWrite();
-    s_lcd->setAddrWindow(0, 0, s_lcd->width(), s_lcd->height());
-    s_lcd->writePixels(buf, s_lcd->width() * s_lcd->height(), true);
+    s_lcd->setAddrWindow(0, 0, w, h);
+    // swap=false: the buffer is already big-endian, so pixelcopy takes the
+    // no_convert path and writeBytes DMAs straight from PSRAM — no CPU pass
+    // over 76800 pixels. writePixelsDMA (not writePixels) is what actually
+    // passes use_dma=true down to Bus_SPI.
+    for (int y = 0; y < h; y += kBlitSliceRows) {
+        const int rows = (y + kBlitSliceRows <= h) ? kBlitSliceRows : (h - y);
+        s_lcd->writePixelsDMA(&buf[(size_t)y * w], rows * w, false);
+    }
     s_lcd->endWrite();
+}
+
+void display_blit_rect(const rgb565be_t* src, int src_stride,
+                       int x, int y, int w, int h) {
+    if (!s_lcd || !src || w <= 0 || h <= 0) return;
+
+    // startWrite/endWrite are reference-counted by LovyanGFX, so this nests
+    // safely inside a block the caller already opened.
+    s_lcd->startWrite();
+    s_lcd->setAddrWindow(x, y, w, h);
+    for (int row = 0; row < h; ++row) {
+        s_lcd->writePixels(&src[(size_t)row * src_stride], w, false);
+    }
+    s_lcd->endWrite();
+    // Callers draw text/rects right after this returns, so finish the transfer
+    // rather than leaving it in flight.
+    s_lcd->waitDMA();
 }
 
 void display_wait_dma(void) {

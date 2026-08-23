@@ -52,12 +52,39 @@ int display_height(void);
 // ---------------------------------------------------------------------------
 
 /**
- * Envia um framebuffer RGB565 completo (320x240) via DMA SPI.
- * @param rgb565_buf  Buffer de 320*240*2 bytes, alinhado a 4 bytes.
- * @note  Retorno NAO significa blit completo — chamar display_wait_dma().
- * @note  buf == nullptr: no-op.
+ * Envia um framebuffer big-endian RGB565 completo (320x240) via DMA SPI.
+ *
+ * Fatiado em blocos de 48 linhas (30720 bytes) porque acima de ~32 KB o
+ * LovyanGFX quebra a transferencia sozinho e insere vTaskDelay(1) entre os
+ * pedacos — ~4 ms de tick desperdicados por frame com FREERTOS_HZ=1000.
+ *
+ * @param fb  Buffer de 320*240*2 bytes em big-endian, alinhado a 4 bytes.
+ * @note  Retorno NAO significa blit completo: a ultima fatia fica em voo.
+ *        Chamar display_wait_dma() antes de reutilizar o buffer.
+ * @note  fb == nullptr: no-op.
  */
-void display_blit_full(const uint16_t* rgb565_buf);
+void display_blit_full(const rgb565be_t* fb);
+
+/**
+ * Envia um retangulo de pixels big-endian para uma regiao da tela.
+ *
+ * Usado pelos overlays (badge FREEZE, thumbnail). Existe para que nenhum
+ * modulo fora de display.cpp precise falar com o LovyanGFX sobre pixels —
+ * o argumento `swap` do writePixels/pushImage vive so aqui.
+ *
+ * Aninha com seguranca dentro de um startWrite()/endWrite() que o chamador
+ * ja tenha aberto (LovyanGFX conta as chamadas por referencia).
+ *
+ * @param src         Origem em big-endian RGB565.
+ * @param src_stride  Largura de uma linha de `src` em pixels.
+ * @param x,y         Canto superior esquerdo no painel.
+ * @param w,h         Dimensoes do retangulo em pixels.
+ * @note  BLOQUEIA ate o DMA terminar, ao contrario de display_blit_full —
+ *        os chamadores emendam outros desenhos logo depois.
+ * @note  src == nullptr, w <= 0 ou h <= 0: no-op.
+ */
+void display_blit_rect(const rgb565be_t* src, int src_stride,
+                       int x, int y, int w, int h);
 
 /**
  * Bloqueia ate o DMA do ultimo blit terminar.
