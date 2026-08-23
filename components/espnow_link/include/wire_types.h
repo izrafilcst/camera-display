@@ -25,25 +25,40 @@ struct __attribute__((packed)) esnow_hdr_t {
 };
 
 // ---------------------------------------------------------------------------
-// Video fragment header — 7 bytes, after esnow_hdr_t for MSG_VIDEO_FRAG.
+// Video fragment header — 8 bytes, after esnow_hdr_t for MSG_VIDEO_FRAG.
 // Wire layout (offsets are from the start of the ESP-NOW packet, including
 // the 2-byte esnow_hdr_t):
-//   offset 2: frame_id   (2)
-//   offset 4: frag_idx   (1)
-//   offset 5: frag_total (1)
-//   offset 6: jpeg_size  (2)
-//   offset 8: payload_len(1)   <-- uint8_t per TX spec, NOT uint16_t
-//   offset 9: tx_emission_ms (4 bytes, ONLY when frag_idx == 0)
-//   offset 9 or 13: jpeg_data
+//   offset  2: frame_id    (2)
+//   offset  4: frag_idx    (1)
+//   offset  5: frag_total  (1)
+//   offset  6: jpeg_size   (2)
+//   offset  8: payload_len (2, little-endian)
+//   offset 10: tx_emission_ms (4 bytes, ONLY when frag_idx == 0)
+//   offset 10 (frag N>0) or 14 (frag 0): jpeg_data
+//
+// GROUND TRUTH: camera-drone/components/frag_codec/src/frag_codec.c writes
+// payload_len with write_u16_le() (2 bytes), and frag_codec.h declares
+// VIDEO_FRAG_HDR_BYTES == 8. The TX code is authoritative — it is what ships
+// bytes on the wire.
+//
+// This was previously declared as uint8_t (7-byte header), following the
+// offset table in camera-drone/docs/RX_HANDOFF_PROMPT.md, which contradicted
+// itself: the table summed to 7 bytes while the same document's summary said
+// 8 bytes. Only 8 closes with the 236/240 payload caps below
+// (2 + 8 + 4 + 236 = 250 and 2 + 8 + 240 = 250). The 1-byte skew corrupted
+// 100% of every reassembled frame and shifted tx_emission_ms by one byte
+// (yielding a timestamp 256x too large). Both sides' unit tests passed
+// because each tested against its own layout.
+// See docs/DIAG-video-24fps-espnow.md §1.
 // ---------------------------------------------------------------------------
 struct __attribute__((packed)) video_frag_hdr_t {
     uint16_t frame_id;
     uint8_t  frag_idx;
     uint8_t  frag_total;
     uint16_t jpeg_size;     // total JPEG size when fully reassembled
-    uint8_t  payload_len;   // bytes of JPEG in THIS fragment (<=236 in frag 0, <=240 otherwise)
+    uint16_t payload_len;   // bytes of JPEG in THIS fragment (<=236 in frag 0, <=240 otherwise)
 };
-static_assert(sizeof(video_frag_hdr_t) == 7, "video_frag_hdr_t must be 7 bytes per TX spec");
+static_assert(sizeof(video_frag_hdr_t) == 8, "video_frag_hdr_t must be 8 bytes per TX frag_codec.h");
 
 // ---------------------------------------------------------------------------
 // Fragment-0 extra — 4 bytes, immediately after video_frag_hdr_t when frag_idx == 0
@@ -93,3 +108,13 @@ static constexpr uint32_t SKIP_DROP_TIMEOUT_MS = 30;
 static_assert(MAX_FRAGS_PER_FRAME > 0 && MAX_FRAGS_PER_FRAME <= 64,
               "MAX_FRAGS_PER_FRAME must fit in frags_bitmap (uint64_t)");
 static_assert(MAX_JPEG_SIZE == 15356, "MAX_JPEG_SIZE must match TX wire formula");
+
+// Header sizes and payload caps must close against the 250-byte MTU. These two
+// asserts are what would have caught the 1-byte payload_len skew at compile
+// time: with a 7-byte video header the sums below land on 249, not 250.
+static_assert(sizeof(esnow_hdr_t) + sizeof(video_frag_hdr_t)
+              + sizeof(video_frag0_extra_t) + FRAG_DATA_MAX_0 == ESPNOW_MTU,
+              "frag 0 layout must fill exactly ESPNOW_MTU: 2 + 8 + 4 + 236 = 250");
+static_assert(sizeof(esnow_hdr_t) + sizeof(video_frag_hdr_t)
+              + FRAG_DATA_MAX_N == ESPNOW_MTU,
+              "frag N>0 layout must fill exactly ESPNOW_MTU: 2 + 8 + 240 = 250");
