@@ -16,6 +16,9 @@ O V0 é entregue em **8 sprints** (originalmente 7; uma nova Sprint 4 — BLE Pa
 | 6 | [sprint-6-hud-camada-a](2026-05-26-sprint-6-hud-camada-a.md) | HUD sempre-visível (link + bateria robô) | 1 dia |
 | 7 | [sprint-7-hud-camada-b-menu](2026-05-26-sprint-7-hud-camada-b-menu.md) | Itens configuráveis + menu + NVS | 2–3 dias |
 | 8 | [sprint-8-hardening](2026-05-26-sprint-8-hardening.md) | Soak + critérios + decisão anti-tearing fase 2 | 1–2 dias |
+| **9** | **[sprint-9-driver-conformance](2026-08-22-sprint-9-driver-conformance.md)** | **Conformidade ILI9341 com o datasheet + blit DMA big-endian + desbloqueio de boot** | **1–2 dias offline + bancada** |
+
+> Sprint 9 foi inserida em 2026-08-22 após uma auditoria comparativa entre `components/display` e os drivers de referência do retro-go, checada contra o datasheet ILI9341 V1.11. Não segue a numeração de dependências abaixo: as waves 1–3 são offline e independentes das Sprints 5–8, e a wave 4 destrava o boot que hoje bloqueia **toda** validação em hardware. Spec: [`../specs/2026-08-22-ili9341-driver-conformance-design.md`](../specs/2026-08-22-ili9341-driver-conformance-design.md).
 
 ## Dependências
 

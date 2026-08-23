@@ -148,7 +148,9 @@ Depois disso, `swap`, `writePixels` e `pushImage` existem em **um arquivo só**.
 
 **Semântica de bloqueio das duas funções** (para não deixar ambíguo): `display_blit_full` retorna com a última fatia em voo — é para isso que existe o `display_wait_dma()`. `display_blit_rect` **espera o DMA terminar antes de retornar**, porque os dois call sites do `render.cpp` emendam outros desenhos logo depois e não teriam onde encaixar um wait.
 
-**Propagação do typedef.** `rgb565be_t` sobe pela cadeia para as assinaturas não mentirem: `render_back_buffer()` passa a devolver `rgb565be_t*` (`components/render/include/render.h`), o parâmetro `out_buf` do decoder acompanha (`components/decoder/include/decoder.h`) e `s_fb[2]` / `s_thumb` em `render.cpp` mudam de tipo. É a mesma largura de sempre — `typedef uint16_t` — então nenhum cast novo aparece; só o nome do tipo muda.
+**Propagação do typedef.** `rgb565be_t` sobe pela cadeia para as assinaturas não mentirem: `render_back_buffer()` passa a devolver `rgb565be_t*` (`components/render/include/render.h`), e `s_fb[2]` / `s_thumb` em `render.cpp` mudam de tipo. É a mesma largura de sempre — `typedef uint16_t` — então nenhum cast novo aparece; só o nome do tipo muda. O componente `render` já declara `REQUIRES display`, então o tipo chega ali de graça.
+
+**Exceção deliberada: o `decoder` não recebe o typedef.** `components/decoder/CMakeLists.txt` declara `REQUIRES espressif__esp_jpeg esp_timer log` — não depende de `display`. Acrescentar essa dependência para importar um `typedef uint16_t` acoplaria o decodificador JPEG ao driver de LCD em troca de zero segurança de tipo (o typedef é transparente; o compilador não distinguiria nada). `decoder.h` mantém `uint16_t* out_buf` e ganha a ordem de bytes **na documentação** do parâmetro. O enforcement real continua sendo o de 4.3: ninguém fora do `display.cpp` empurra pixel.
 
 O `render.cpp` continua usando `display_get_lgfx_ptr()` para `fillRect` / `print` / `setTextColor` dos badges — primitivas de desenho, cor convertida internamente pelo LGFX, imunes a ordem de byte.
 
