@@ -5,6 +5,20 @@
 extern "C" {
 #endif
 
+/**
+ * RGB565 armazenado em big-endian — a ordem de bytes que o ILI9341 le do fio.
+ *
+ * E o mesmo `uint16_t` de sempre: o nome carrega o contrato, nao um tipo
+ * distinto, entao o compilador NAO pega uma troca acidental. O enforcement de
+ * verdade e a fronteira desta API — nenhum modulo fora de display.cpp empurra
+ * pixel para o painel; quem precisa desenhar chama display_blit_full ou
+ * display_blit_rect.
+ *
+ * Valor logico: bits[15..11]=R5, [10..5]=G6, [4..0]=B5, byte-swapped.
+ * Ex.: vermelho puro = 0x00F8 (e nao 0xF800).
+ */
+typedef uint16_t rgb565be_t;
+
 // ---------------------------------------------------------------------------
 // Display lifecycle
 // ---------------------------------------------------------------------------
