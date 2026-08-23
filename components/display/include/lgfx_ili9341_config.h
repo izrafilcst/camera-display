@@ -10,8 +10,9 @@
  * NOTAS DE HARDWARE:
  *  - bus_shared = false: SD e touch nao sao usados via LovyanGFX.
  *    Evita overhead de mutex (~5-10 us/frame) desnecessario.
- *  - swap = true em writePixels: ESP32-S3 e little-endian, ILI9341 espera
- *    big-endian (byte alto primeiro). Sem swap = cores embaralhadas.
+ *  - swap = false em writePixels/writePixelsDMA: o framebuffer ja vive em
+ *    big-endian (rgb565be_t), a ordem que o ILI9341 espera. Nao ha conversao
+ *    de CPU no caminho do blit — ver display_blit_full.
  *  - rgb_order = false: escreve MAD_BGR no MADCTL. Nao e o default do chip
  *    (que e RGB, 8'h00) — e o que o modulo vermelho pede. Ver comentario
  *    detalhado no cfg.rgb_order abaixo.

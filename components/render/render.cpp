@@ -4,7 +4,8 @@
 // Concurrency model:
 //   - render_present (decode task, Core 1) flips s_back_idx and starts DMA.
 //   - render_show_freeze / render_show_disconnected (link_ui_task, Core 1)
-//     draw on the LCD directly via LovyanGFX.
+//     draw badges via LovyanGFX (fillRect/print — cor convertida internamente,
+//     imune a ordem de byte) e pixels via display_blit_rect.
 //   - render_capture_thumb reads the just-blitted front buffer.
 // All four take s_mutex so concurrent LCD or back_idx access is serialized.
 
@@ -20,14 +21,14 @@
 
 static const char* TAG = "render";
 
-static uint16_t*         s_fb[2]    = {nullptr, nullptr};
+static rgb565be_t*       s_fb[2]    = {nullptr, nullptr};
 static int               s_back_idx = 0;
 static SemaphoreHandle_t s_mutex    = nullptr;
 
 // Thumbnail of the last presented frame (80x60, 4× downsample).
 static constexpr int THUMB_W = 80;
 static constexpr int THUMB_H = 60;
-static uint16_t s_thumb[THUMB_W * THUMB_H];
+static rgb565be_t s_thumb[THUMB_W * THUMB_H];
 static bool     s_thumb_valid = false;
 static bool     s_has_presented = false;
 
@@ -59,7 +60,7 @@ bool render_init(void) {
     return true;
 }
 
-uint16_t* render_back_buffer(void) {
+rgb565be_t* render_back_buffer(void) {
     return s_fb[s_back_idx];
 }
 
@@ -81,7 +82,7 @@ void render_capture_thumb(void) {
     // The just-blitted frame is now the "front" (index s_back_idx ^ 1 because
     // render_present already flipped). The decoder is forbidden from touching
     // it until the next render_present swap.
-    const uint16_t* src = s_fb[s_back_idx ^ 1];
+    const rgb565be_t* src = s_fb[s_back_idx ^ 1];
     for (int y = 0; y < THUMB_H; ++y) {
         const uint16_t* row = &src[(y * 4) * 320];
         for (int x = 0; x < THUMB_W; ++x) {
@@ -113,13 +114,8 @@ void render_show_freeze(void) {
     } else if (s_has_presented) {
         // Erase the badge by streaming the underlying front-buffer slice.
         display_wait_dma();
-        lcd->startWrite();
-        lcd->setAddrWindow(248, 4, 64, 16);
-        const uint16_t* fb = s_fb[s_back_idx ^ 1];
-        for (int y = 4; y < 20; ++y) {
-            lcd->writePixels(&fb[y * 320 + 248], 64, true);
-        }
-        lcd->endWrite();
+        const rgb565be_t* fb = s_fb[s_back_idx ^ 1];
+        display_blit_rect(&fb[4 * 320 + 248], 320, 248, 4, 64, 16);
     }
     xSemaphoreGive(s_mutex);
 }
@@ -139,7 +135,7 @@ void render_show_disconnected(uint32_t since_ms) {
     lcd->setCursor(110, 110);
     lcd->printf("offline: %lu s", (unsigned long)(since_ms / 1000));
     if (s_thumb_valid) {
-        lcd->pushImage(120, 140, THUMB_W, THUMB_H, s_thumb);
+        display_blit_rect(s_thumb, THUMB_W, 120, 140, THUMB_W, THUMB_H);
         lcd->setCursor(120, 205);
         lcd->print("ultimo frame");
     }
