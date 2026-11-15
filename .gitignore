@@ -20,3 +20,11 @@ ruvector.db
 .swarm/
 .claude/
 CLAUDE.md
+
+# Ruflo local secrets and runtime data
+.env
+.env.local
+.env.*.local
+.claude-flow/data/
+.claude-flow/logs/
+.claude-flow/sessions/
